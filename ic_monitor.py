@@ -112,13 +112,30 @@ state = {
 }
 
 
-# ─── LOGGING ─────────────────────────────────────────────────────────────────
+# ─── LOGGING (with auto-rotation) ────────────────────────────────────────────
+_LOG_MAX_LINES = 5000   # rotate when log exceeds this
+_log_counter   = 0      # lines written this session
+
 def log(msg, level="INFO"):
+    global _log_counter
     now  = datetime.now(IST).strftime("%H:%M:%S")
     line = f"[{now}] {level:8s} | {msg}"
     print(line, flush=True)
     with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
+    _log_counter += 1
+    # Auto-rotate every 500 lines written (check file size periodically)
+    if _log_counter % 500 == 0:
+        try:
+            sz = os.path.getsize(LOG_FILE)
+            if sz > 500_000:  # >500KB → trim to last 2000 lines
+                with open(LOG_FILE, "r") as f:
+                    lines = f.readlines()
+                if len(lines) > _LOG_MAX_LINES:
+                    with open(LOG_FILE, "w") as f:
+                        f.writelines(lines[-2000:])
+        except Exception:
+            pass
 
 
 def alert_once(key, msg, level="WARN"):
@@ -940,6 +957,18 @@ def total_mtm_all(positions):
     )
 
 
+# ─── GRACEFUL SHUTDOWN ────────────────────────────────────────────────────────
+_shutdown_requested = False
+
+def _handle_signal(signum, frame):
+    global _shutdown_requested
+    log(f"Signal {signum} received — requesting graceful shutdown", "WARN")
+    _shutdown_requested = True
+
+signal.signal(signal.SIGTERM, _handle_signal)
+signal.signal(signal.SIGINT,  _handle_signal)
+
+
 # ─── MONITOR LOOP ─────────────────────────────────────────────────────────────
 def monitor_loop():
     # ── Infrastructure pre-flight check ──────────────────────────────────────
@@ -1056,7 +1085,7 @@ def monitor_loop():
         "vix_entry": state.get("vix_entry", 0),
     })
 
-    while True:
+    while not _shutdown_requested:
         try:
             hm        = ist_hm()
             now       = ist_now()
