@@ -1,0 +1,34 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+- job_name: openalgo
+  static_configs:
+  - targets:
+      - localhost
+    labels:
+      job: openalgo
+      env: local
+      __path__: /var/log/openalgo/*.log
+  pipeline_stages:
+  # Attempt to parse JSON lines
+  - json:
+      expressions:
+        level: level
+        logger: logger
+        timestamp: timestamp
+  # Set labels from extracted fields
+  - labels:
+      level:
+      logger:
+  # Set timestamp from extracted field (if available)
+  - timestamp:
+      source: timestamp
+      format: RFC3339

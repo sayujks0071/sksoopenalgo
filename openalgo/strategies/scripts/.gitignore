@@ -1,0 +1,26 @@
+# Ignore all strategy scripts uploaded by users
+*.py
+
+# But keep this .gitignore file
+!.gitignore
+
+# Ignore log files if any
+*.log
+
+# Ignore backup files
+*.bak
+*.backup
+*~
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Keep the directory but ignore contents
+# This ensures the scripts folder exists in git but user strategies are not tracked
+!nse_ma_crossover_strategy.py
+!mcx_aluminium_trend_strategy.py
+!mcx_copper_trend_strategy.py
+!nifty_smart_trend_oi.py

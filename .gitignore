@@ -1,10 +1,13 @@
 # ── Credentials & secrets ────────────────────────────────────────────────────
 .env
 .env.*
+**/.env
+**/.env.*
 *.pem
 *.rtf
 dhan_credentials*
 dhan-login-*.png
+openalgo/strategies/strategy_env.json
 
 # ── Python cache ─────────────────────────────────────────────────────────────
 __pycache__/
@@ -23,18 +26,23 @@ venv/
 db/*.db
 db/*.db-shm
 db/*.db-wal
+*.db
 *.duckdb
+openalgo/db/backups/
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 log/
 logs/
+reports/
 
 # ── OS & IDE ─────────────────────────────────────────────────────────────────
 .DS_Store
+**/.DS_Store
 .vscode/
 .cursor/
 .idea/
+.claude/
 
 # ── Large / generated ────────────────────────────────────────────────────────
 toolbox
@@ -50,8 +58,7 @@ openalgo/frontend/dist/
 
 # ── Misc stray ───────────────────────────────────────────────────────────────
 Untitled.rtf
-__pycache__
 .cache/
 
-# Nested git repo — managed separately
+# ── Nested git repo — managed separately ─────────────────────────────────────
 openalgo/
