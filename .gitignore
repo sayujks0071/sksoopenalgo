@@ -52,3 +52,6 @@ openalgo/frontend/dist/
 Untitled.rtf
 __pycache__
 .cache/
+
+# Nested git repo — managed separately
+openalgo/
