@@ -1,0 +1,382 @@
+================================================================================
+                 OPENALGO + DHAN API - GETTING STARTED GUIDE
+================================================================================
+
+🎉 SETUP COMPLETE! Your production configuration is ready.
+
+📍 LOCATION: All files are in this directory
+   /path/to/openalgo/
+
+📋 WHAT WAS CREATED:
+   ✅ docker-compose.prod.yml          (Production Docker setup)
+   ✅ .env.production                  (Environment template)
+   ✅ deploy_lightsail.sh              (AWS Lightsail deployment)
+   ✅ manage.sh                        (Operations management)
+   ✅ check_production_readiness.sh    (Pre-deployment check)
+   ✅ nginx/nginx.conf                 (Nginx configuration)
+   ✅ nginx/conf.d/openalgo.conf       (OpenAlgo site config)
+   ✅ DEPLOYMENT_GUIDE.md              (Complete guide)
+   ✅ QUICK_START.md                   (Quick reference)
+   ✅ PRODUCTION_CHECKLIST.md          (Security checklist)
+   ✅ README_DEPLOYMENT.md             (Overview)
+   ✅ FILES_CREATED.md                 (Summary)
+
+
+🚀 DEPLOYMENT IN 5 STEPS
+================================================================================
+
+STEP 1: Access Your AWS Lightsail Instance
+────────────────────────────────────────────
+From your local machine:
+
+  $ ssh -i /path/to/your/lightsail-key.pem ubuntu@YOUR_LIGHTSAIL_IP
+
+Example:
+  $ ssh -i ~/.ssh/lightsail.pem ubuntu@123.45.67.89
+
+
+STEP 2: Clone the Repository
+────────────────────────────────────────────
+On the Lightsail instance:
+
+  $ git clone https://github.com/marketcalls/openalgo.git
+  $ cd openalgo
+
+
+STEP 3: Run the Deployment Script
+────────────────────────────────────────────
+  $ chmod +x deploy_lightsail.sh
+  $ ./deploy_lightsail.sh algo.endoscopicspinehyderabad.in
+
+  ⏱️  This takes 5-15 minutes. It will:
+      • Install Docker and dependencies
+      • Configure Nginx with SSL
+      • Set up PostgreSQL database
+      • Create systemd service
+      • Generate certificates
+      • Start all containers
+
+
+STEP 4: Update Credentials
+────────────────────────────────────────────
+After deployment completes:
+
+  $ sudo nano /opt/openalgo/.env
+
+  ⚠️  UPDATE THESE VALUES:
+      BROKER_API_KEY=YOUR_DHAN_API_KEY
+      BROKER_API_SECRET=YOUR_DHAN_API_SECRET
+      DB_PASSWORD=STRONG_PASSWORD_25_CHARS
+
+  Save file: Ctrl+O, Enter, Ctrl+X
+
+
+STEP 5: Restart Services and Verify
+────────────────────────────────────────────
+  $ sudo systemctl restart openalgo
+  $ /opt/openalgo/monitor.sh
+
+  ✅ You should see all services running
+  ✅ Health checks should pass
+  ✅ Access: https://algo.endoscopicspinehyderabad.in
+
+
+📚 DOCUMENTATION ROADMAP
+================================================================================
+
+START HERE:
+  📄 README_DEPLOYMENT.md
+     Complete overview, architecture, and quick start
+
+FOR DETAILED STEPS:
+  📄 DEPLOYMENT_GUIDE.md
+     Step-by-step deployment, firewall, SSL, troubleshooting
+
+FOR QUICK REFERENCE:
+  📄 QUICK_START.md
+     Local development, quick commands, basic setup
+
+FOR PRE-DEPLOYMENT:
+  📄 PRODUCTION_CHECKLIST.md
+     Security checklist, system requirements, verification
+
+FOR UNDERSTANDING WHAT'S CREATED:
+  📄 FILES_CREATED.md
+     Detailed breakdown of all configuration files
+
+
+🔧 DAILY MANAGEMENT
+================================================================================
+
+Status Check:
+  $ /opt/openalgo/manage.sh status
+
+View Application Logs:
+  $ /opt/openalgo/manage.sh logs openalgo
+
+View Web Server Logs:
+  $ /opt/openalgo/manage.sh logs nginx
+
+Restart Services:
+  $ /opt/openalgo/manage.sh restart
+
+Health Check:
+  $ /opt/openalgo/monitor.sh
+
+Create Backup:
+  $ /opt/openalgo/manage.sh backup
+
+Database Access:
+  $ /opt/openalgo/manage.sh psql
+
+
+✅ PRE-DEPLOYMENT CHECKLIST
+================================================================================
+
+Before you start deployment, verify:
+
+  ☐ AWS Lightsail instance is running (Ubuntu 20.04 or 22.04)
+  ☐ You can SSH into the instance
+  ☐ Custom domain registered (algo.endoscopicspinehyderabad.in)
+  ☐ DNS A record pointing to Lightsail IP
+  ☐ Lightsail firewall allows ports 80, 443, 22
+  ☐ Dhan API credentials obtained (Key + Secret)
+  ☐ Instance has 2GB+ RAM and 20GB+ storage
+  ☐ You have an email address for SSL certificates
+
+
+🔐 SECURITY NOTES
+================================================================================
+
+1. CREDENTIALS
+   • Keep .env file permissions at 600 (read/write for owner only)
+   • Use strong passwords (25+ characters, mixed case, numbers, symbols)
+   • Rotate secrets every 90 days
+   • Never commit .env file to git
+
+2. FIREWALL
+   • Allow port 80 for Let's Encrypt certificate renewal
+   • Allow port 443 for HTTPS web access
+   • Restrict SSH (port 22) to your IP only
+   • Configure in AWS Lightsail console
+
+3. BACKUPS
+   • Create backups before updates
+   • Test restore procedures monthly
+   • Store backups securely
+
+4. MONITORING
+   • Check health daily: /opt/openalgo/monitor.sh
+   • Review logs weekly
+   • Monitor SSL certificate expiration
+
+
+🎯 SUCCESS INDICATORS
+================================================================================
+
+Your deployment is successful when:
+
+  1. ✅ Application accessible at https://algo.endoscopicspinehyderabad.in
+     (Browser should show green lock 🔒)
+
+  2. ✅ All containers running
+     $ docker compose ps
+     (Should show openalgo, postgres, nginx, certbot all running)
+
+  3. ✅ Database is healthy
+     $ /opt/openalgo/manage.sh psql
+     (Type: SELECT 1;  should return 1)
+
+  4. ✅ Dhan broker configured
+     (Settings → Broker Configuration → Select Dhan → Authenticate)
+
+  5. ✅ Health check passes
+     $ /opt/openalgo/monitor.sh
+     (Should show all services healthy)
+
+
+📞 TROUBLESHOOTING QUICK FIX
+================================================================================
+
+"Site not accessible"
+  1. Check containers: docker compose ps
+  2. Check logs: /opt/openalgo/manage.sh logs
+  3. Check firewall: AWS Lightsail Console → Networking
+
+"Certificate error"
+  1. Wait 5-10 minutes for Let's Encrypt to issue cert
+  2. Check: echo | openssl s_client -connect algo....:443
+  3. Restart nginx: docker compose restart nginx
+
+"Database connection failed"
+  1. Test: /opt/openalgo/manage.sh psql
+  2. Restart: docker compose restart postgres
+  3. Check .env: grep "^DB_" /opt/openalgo/.env
+
+"API not responding"
+  1. Check logs: /opt/openalgo/manage.sh logs openalgo
+  2. Restart app: /opt/openalgo/manage.sh restart openalgo
+  3. Check resources: docker stats
+
+
+🌟 NEXT STEPS AFTER DEPLOYMENT
+================================================================================
+
+1. Login to the Application
+   • Go to https://algo.endoscopicspinehyderabad.in
+   • Create admin account
+   • Verify you can login
+
+2. Configure Dhan Broker
+   • Settings → Broker Configuration
+   • Select "Dhan" broker
+   • Complete OAuth authentication
+   • Verify connection
+
+3. Set Up Your First Strategy
+   • Go to Strategies section
+   • Create new or upload strategy code
+   • Configure parameters
+   • Test with small amounts
+
+4. Set Up Monitoring
+   • Enable health check monitoring
+   • Set up backup schedule
+   • Monitor logs regularly
+   • Test alert system
+
+5. Test Trading (Small Amounts)
+   • Place small test orders
+   • Monitor order execution
+   • Check profit/loss tracking
+   • Verify WebSocket updates
+
+
+📊 SYSTEM ARCHITECTURE
+================================================================================
+
+Your setup includes:
+
+  OpenAlgo (Python Flask)        → Real-time trading platform
+         ↓
+  WebSocket (port 8765)          → Real-time data & updates
+         ↓
+  Nginx Reverse Proxy (443)      → SSL/TLS encrypted HTTPS
+         ↓
+  PostgreSQL Database            → Persistent data storage
+         ↓
+  Certbot (SSL)                  → Automatic certificate renewal
+         ↓
+  Systemd Service                → Auto-start on reboot
+
+
+🔑 KEY URLS & PORTS
+================================================================================
+
+After Deployment:
+  Web App:       https://algo.endoscopicspinehyderabad.in
+  WebSocket:     wss://algo.endoscopicspinehyderabad.in/ws
+  Dhan API:      https://dhan.co/docs
+  OpenAlgo Docs: https://docs.openalgo.in
+
+Local (if testing locally):
+  Web App:       http://127.0.0.1:5000
+  WebSocket:     ws://127.0.0.1:8765
+  Database:      localhost:5432
+
+
+📝 IMPORTANT FILES & LOCATIONS
+================================================================================
+
+Configuration:
+  /opt/openalgo/.env             (Production credentials)
+  /opt/openalgo/docker-compose.yml
+  /opt/openalgo/nginx/conf.d/openalgo.conf
+
+Data:
+  Database:      /var/lib/docker/volumes/openalgo-postgres_data
+  Logs:          /opt/openalgo/logs/
+  Strategies:    /opt/openalgo/strategies/
+  Backups:       /opt/openalgo/backups/
+
+SSL Certificates:
+  /opt/openalgo/ssl/certbot/conf/live/algo.endoscopicspinehyderabad.in/
+
+
+💻 USEFUL COMMANDS
+================================================================================
+
+Service Management:
+  sudo systemctl status openalgo       (Check status)
+  sudo systemctl restart openalgo      (Restart)
+  journalctl -u openalgo -f            (View logs)
+
+Docker Management:
+  docker compose ps                    (Container status)
+  docker compose logs -f               (Follow logs)
+  docker stats                         (Resource usage)
+
+Database Access:
+  docker compose exec postgres psql -U openalgo
+  (Then: SELECT * FROM strategies;  to see your data)
+
+System Information:
+  df -h                                (Disk usage)
+  free -h                              (Memory usage)
+  ps aux | grep openalgo               (Processes)
+
+
+🎓 LEARNING RESOURCES
+================================================================================
+
+Official Documentation:
+  • OpenAlgo: https://docs.openalgo.in
+  • Dhan API: https://dhan.co/docs
+  • Docker: https://docs.docker.com
+  • Nginx: https://nginx.org/en/docs/
+
+Community:
+  • GitHub: https://github.com/marketcalls/openalgo
+  • Issues: Report problems on GitHub
+
+Support:
+  • Check logs: /opt/openalgo/manage.sh logs
+  • Run health check: /opt/openalgo/monitor.sh
+  • Review documentation in this directory
+
+
+✨ THAT'S IT!
+================================================================================
+
+Your OpenAlgo + Dhan API production setup is ready.
+
+Next step: SSH into your Lightsail instance and run:
+  ./deploy_lightsail.sh algo.endoscopicspinehyderabad.in
+
+It will automatically:
+  1. Install all dependencies
+  2. Configure everything
+  3. Get SSL certificate
+  4. Start services
+  5. Enable auto-start
+
+In 5-15 minutes, you'll have:
+  ✅ Live trading platform
+  ✅ Dhan broker integration
+  ✅ Custom domain with SSL
+  ✅ Automated backups
+  ✅ Full monitoring
+
+Questions? See the documentation files:
+  • DEPLOYMENT_GUIDE.md     - Complete instructions
+  • README_DEPLOYMENT.md    - Overview
+  • QUICK_START.md          - Quick reference
+
+Happy algorithmic trading! 📈
+
+================================================================================
+Last Updated: February 17, 2025
+OpenAlgo v1.0.6
+Dhan API Integration Ready
+Production Deployment Ready
+================================================================================

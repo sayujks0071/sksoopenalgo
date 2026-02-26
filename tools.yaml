@@ -1,0 +1,75 @@
+sources:
+  aitrapp-db:
+    kind: postgres
+    host: 127.0.0.1
+    port: 5432
+    database: aitrapp
+    user: mac
+    password: "placeholder"
+
+tools:
+  search-signals-by-strategy:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Search for trading signals by strategy name.
+    parameters:
+      - name: strategy_name
+        type: string
+        description: The name of the trading strategy (e.g., GammaScalper, CrudeOilScalper).
+    statement: SELECT id, ts, symbol, side, signal_price, stop_loss, take_profit, reason FROM signals WHERE strategy_name ILIKE '%' || $1 || '%' ORDER BY ts DESC LIMIT 20;
+
+  search-signals-by-symbol:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Search for trading signals by symbol.
+    parameters:
+      - name: symbol
+        type: string
+        description: The trading symbol (e.g., NIFTY, CRUDEOIL).
+    statement: SELECT id, ts, symbol, side, signal_price, stop_loss, take_profit, strategy_name, reason FROM signals WHERE symbol ILIKE '%' || $1 || '%' ORDER BY ts DESC LIMIT 20;
+
+  get-recent-signals:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Get the most recent trading signals across all strategies.
+    parameters:
+      - name: limit
+        type: string
+        description: Number of signals to retrieve (default 10).
+    statement: SELECT id, ts, symbol, side, signal_price, strategy_name, reason FROM signals ORDER BY ts DESC LIMIT CAST($1 AS INTEGER);
+
+  search-orders-by-symbol:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Search for orders by symbol.
+    parameters:
+      - name: symbol
+        type: string
+        description: The trading symbol.
+    statement: SELECT id, ts, symbol, side, qty, order_type, price, status, strategy_name FROM orders WHERE symbol ILIKE '%' || $1 || '%' ORDER BY ts DESC LIMIT 20;
+
+  get-order-status:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Get orders by status (e.g., REJECTED, COMPLETE, PENDING).
+    parameters:
+      - name: status
+        type: string
+        description: Order status to filter by.
+    statement: SELECT id, ts, symbol, side, qty, price, status, strategy_name FROM orders WHERE status = $1 ORDER BY ts DESC LIMIT 20;
+
+  get-strategy-performance:
+    kind: postgres-sql
+    source: aitrapp-db
+    description: Get signal count by strategy to analyze performance.
+    parameters: []
+    statement: SELECT strategy_name, COUNT(*) as signal_count, COUNT(DISTINCT symbol) as symbols_traded FROM signals GROUP BY strategy_name ORDER BY signal_count DESC;
+
+toolsets:
+  trading-toolset:
+    - search-signals-by-strategy
+    - search-signals-by-symbol
+    - get-recent-signals
+    - search-orders-by-symbol
+    - get-order-status
+    - get-strategy-performance

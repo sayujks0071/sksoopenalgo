@@ -1,0 +1,39 @@
+# CodeRabbit Configuration for OpenAlgo Trading System
+version: "0.1"
+
+reviews:
+  # Trading systems require high precision.
+  profile: "chill" # 'chill' is good, but we want 'assertive' for critical logic if available, or just standard prompt instructions.
+  
+  auto_review:
+    enabled: true
+    ignore_title_keywords:
+      - "WIP"
+      - "Draft"
+
+  # Focus areas for the AI
+  high_level_summary: true
+  poem: false # No poems, this is financial software.
+  
+  path_filters:
+    - "!**/*.json"      # Ignore large data files
+    - "!**/*.lock"
+    - "!**/logs/**"
+    
+  instructions: |
+    You are reviewing a Python Algorithmic Trading System (OpenAlgo).
+    Prioritize the following CRITICAL safety checks:
+    
+    1. **Floating Point Errors**: Ensure prices and quantities are handled with `decimal` or proper rounding. Flag any direct `==` comparisons on floats.
+    2. **Order Safety**: Check for "Market" orders where "Limit" orders should be used. Ensure stop-losses are always present.
+    3. **Infinite Loops**: In `while True:` loops, ensure there is a `time.sleep()` to prevent CPU pinning.
+    4. **API Rate Limits**: Flag code that might spam the API (Dhan/Shoonya) without rate limiting.
+    5. **Secret Leaks**: IMMEDIATELY BLOCK any commit that contains hardcoded API keys or secrets.
+    6. **Error Handling**: Every API call (place_order, fetch_data) MUST be wrapped in a try/except block.
+    
+    Style Guide:
+    - Prefer generic `logging` over `print()`.
+    - Type hints are required for all new functions.
+
+chat:
+  auto_reply: true

@@ -1,0 +1,54 @@
+# ── Credentials & secrets ────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.rtf
+dhan_credentials*
+dhan-login-*.png
+
+# ── Python cache ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+.venv-vbt/
+
+# ── Databases ────────────────────────────────────────────────────────────────
+db/*.db
+db/*.db-shm
+db/*.db-wal
+*.duckdb
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+log/
+logs/
+
+# ── OS & IDE ─────────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.cursor/
+.idea/
+
+# ── Large / generated ────────────────────────────────────────────────────────
+toolbox
+security_id_list.csv
+output/
+lightsail_status
+127.0.0.1
+*.bak
+
+# ── Node / frontend build ────────────────────────────────────────────────────
+node_modules/
+openalgo/frontend/dist/
+
+# ── Misc stray ───────────────────────────────────────────────────────────────
+Untitled.rtf
+__pycache__
+.cache/
