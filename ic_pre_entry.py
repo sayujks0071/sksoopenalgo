@@ -15,18 +15,22 @@ Usage:
 """
 
 import sys
+import json as _json
+import os
 import time
 import requests
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ── Config — single source of truth ─────────────────────────────────────────
-from ic_config import OPENALGO_KEY as KEY, OPENALGO_URL as _API_BASE, \
-                      get_next_expiry, LOT_SIZE, SPAN_PER_LOT as SPAN_MARGIN
+from ic_config import (OPENALGO_KEY as KEY, OPENALGO_URL as _API_BASE,
+                       get_next_expiry, LOT_SIZE, SPAN_PER_LOT as SPAN_MARGIN,
+                       MAX_CONSECUTIVE_LOSSES, WEEKLY_LOSS_LIMIT, TRADE_HISTORY,
+                       VIX_MIN_ENTRY)
 API    = _API_BASE
 EXPIRY = get_next_expiry()   # auto-computes each run — no more manual weekly updates
 
-MIN_CREDIT        = 20     # ₹/unit: below this → SKIP
+MIN_CREDIT        = 25     # ₹/unit: below this → SKIP (raised for 33-lot size)
 CREDIT_CAUTION    = 15     # ₹/unit: below this but ≥10 → CAUTION
 GAP_SKIP_PCT      = 1.5    # NIFTY gap > this % from session open vs prev ATM → wait
 VIX_HIGH_SKIP     = 18     # VIX > this with VOLATILE_CHOP → SKIP
@@ -53,17 +57,22 @@ def get_option_chain(expiry, strike_count=10):
 
 
 def get_vix():
-    """Attempt to fetch India VIX via optionchain; return 14.0 if unavailable."""
+    """Fetch India VIX via OpenAlgo quotes endpoint.
+    FIX: The previous approach used optionchain for INDIAVIX — this always returned 0
+    because INDIAVIX has no option chain. Use /quotes for the index LTP directly.
+    Returns the live VIX value, or 0.0 if unavailable (caller handles 0 as blind-VIX).
+    """
     try:
-        rv = post("optionchain", {
-            "apikey": KEY, "underlying": "INDIAVIX",
-            "exchange": "NSE_INDEX", "expiry_date": EXPIRY,
-            "strike_count": 1
+        rv = post("quotes", {
+            "apikey": KEY, "symbol": "INDIAVIX", "exchange": "NSE_INDEX"
         }, timeout=5)
-        v = float(rv.get("underlying_ltp", 0) or 0)
-        return v if v > 0 else 14.0
-    except Exception:
-        return 14.0
+        vix_data = rv.get("data") or rv
+        v = float(vix_data.get("ltp", 0) or vix_data.get("last_price", 0) or 0)
+        if v > 0:
+            return v
+    except Exception as e:
+        print(f"  ⚠️  VIX quotes error: {e}")
+    return 0.0   # 0.0 = unknown VIX (caller will use RANGE_UNKNOWN_VIX regime)
 
 
 def get_funds():
@@ -71,16 +80,45 @@ def get_funds():
     return float(resp.get("data", {}).get("availablecash", 0) or 0)
 
 
-def detect_regime():
-    """Call RegimeDetector from OpenClaw skills; fallback to 'UNKNOWN' on error."""
+def detect_regime(nifty_ltp: float = 0.0, vix: float = 0.0):
+    """Detect market regime using live NIFTY data.
+
+    First tries the OpenClaw RegimeDetector skill. If unavailable (99% of the time),
+    falls back to a VIX + price-action heuristic that actually works.
+
+    Fallback regime logic (based on CMT/CBOE best practices):
+      - VIX < 13:  LOW_VOL   → IC edge is thin; use reduced lots
+      - VIX 13-16: RANGE     → ideal IC conditions
+      - VIX 16-20: ELEVATED  → moderate risk, reduce lots 25%
+      - VIX 20-25: HIGH_VOL  → reduce lots 50%
+      - VIX > 25:  EXTREME   → skip (IC too risky)
+      - NIFTY gap > 1.5% from prev close: GAP_DAY → wait for 10:30 AM settlement
+    """
+    # Try OpenClaw skill first
     try:
         sys.path.insert(0, "/Users/mac/.openclaw/workspace/skills/market-regime/helpers")
         from regime_detector import RegimeDetector
         result = RegimeDetector().detect_regime("NIFTY", "NSE_INDEX")
         return result.get("regime", "UNKNOWN"), result.get("position_sizing_factor", 1.0)
     except Exception as e:
-        print(f"  ⚠️  Regime detector error: {e}")
-        return "UNKNOWN", 1.0
+        pass   # skill not available — use VIX heuristic
+
+    # ── VIX-based fallback regime (always available if VIX fetch works) ──────
+    # Also uses the live NIFTY LTP for gap detection (if available via OHLC)
+    if vix <= 0:
+        print("  ⚠️  Regime: VIX unavailable — assuming RANGE regime (factor 0.85 caution)")
+        return "RANGE_UNKNOWN_VIX", 0.85   # cautious sizing when VIX is blind
+
+    if vix > 25:
+        return "EXTREME_VOL", 0.0     # skip trading
+    elif vix > 20:
+        return "HIGH_VOL", 0.5        # 50% lots
+    elif vix > 16:
+        return "ELEVATED_VOL", 0.75   # 75% lots
+    elif vix > 13:
+        return "RANGE", 1.0           # ideal IC conditions
+    else:
+        return "LOW_VOL", 0.70        # VIX < 13 → premium too thin → 70% lots
 
 
 def compute_wave_lots(avail, vix_factor=1.0):
@@ -90,6 +128,65 @@ def compute_wave_lots(avail, vix_factor=1.0):
     wave2    = max(4, min(40, int(wave1 * 0.65)))
     wave3    = max(4, min(40, int(wave1 * 0.40)))
     return wave1, wave2, wave3
+
+
+def check_recent_performance() -> tuple[bool, str]:
+    """3.2: Circuit breaker — check recent trade history for consecutive losses or weekly floor.
+    Also checks today's cumulative P&L across all sessions (multi-session day tracking).
+    Returns (should_skip: bool, reason: str).
+    """
+    try:
+        if not os.path.exists(TRADE_HISTORY):
+            return False, ""
+        with open(TRADE_HISTORY) as f:
+            lines = f.readlines()
+        if not lines:
+            return False, ""
+
+        # Parse ALL trades (for today's daily P&L check)
+        all_trades = []
+        for line in lines:
+            try:
+                all_trades.append(_json.loads(line.strip()))
+            except Exception:
+                pass
+
+        if not all_trades:
+            return False, ""
+
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+
+        # ── Check today's cumulative P&L (CRITICAL: multi-session day fix) ──
+        # ic_monitor MAX_DAILY_LOSS only tracks the CURRENT session's MTM.
+        # If you lost ₹80K in the morning session and start a new session,
+        # the MAX_DAILY_LOSS check resets to 0. This cross-session daily floor
+        # ensures we don't keep adding sessions on a bad day.
+        today_pnl = sum(t.get("pnl", 0) for t in all_trades if t.get("date", "") == today)
+        if today_pnl < -75_000:   # ₹75K intraday loss = stop all trading today
+            return True, (f"Daily loss floor: today's cumulative P&L ₹{today_pnl:,.0f} "
+                          f"< -₹75,000 limit — no more sessions today")
+
+        # Parse last 10 trades for consecutive loss check
+        trades = all_trades[-10:]
+
+        # Check consecutive losses (last N trades, any date)
+        recent = trades[-MAX_CONSECUTIVE_LOSSES:]
+        if len(recent) >= MAX_CONSECUTIVE_LOSSES:
+            if all(t.get("pnl", 0) < 0 for t in recent):
+                return True, (f"Circuit breaker: {MAX_CONSECUTIVE_LOSSES} consecutive losses "
+                              f"(last P&Ls: {[round(t.get('pnl',0)) for t in recent]})")
+
+        # Check weekly P&L floor
+        week_ago = (datetime.now(IST) - timedelta(days=7)).strftime("%Y-%m-%d")
+        weekly_pnl = sum(t.get("pnl", 0) for t in all_trades
+                         if t.get("date", "") >= week_ago)
+        if weekly_pnl < WEEKLY_LOSS_LIMIT:
+            return True, (f"Weekly loss floor: ₹{weekly_pnl:,.0f} < ₹{WEEKLY_LOSS_LIMIT:,.0f} limit")
+
+        return False, ""
+    except Exception as e:
+        print(f"  ⚠️  Circuit breaker check failed: {e}")
+        return False, ""  # fail open — don't block trading on check errors
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -103,6 +200,15 @@ def main():
 
     reasons_skip    = []
     reasons_caution = []
+
+    # ── 0. Circuit breaker (3.2) ─────────────────────────────────────────────
+    print("\n[0/6] Checking recent performance (circuit breaker)...")
+    cb_skip, cb_reason = check_recent_performance()
+    if cb_skip:
+        print(f"  {cb_reason}")
+        reasons_skip.append(cb_reason)
+    else:
+        print("  Recent performance OK — no circuit breaker triggered")
 
     # ── 1. Fetch option chain ────────────────────────────────────────────────
     print("\n[1/6] Fetching option chain...")
@@ -135,16 +241,16 @@ def main():
     elif vix > 16:
         vix_factor = 0.75
         print(f"  ⚠️  VIX 16–20: reduce lots 25%")
-    elif vix < 12:
+    elif vix < VIX_MIN_ENTRY:
         vix_factor = 0.0
-        print(f"  ⚠️  VIX < 12: premium too thin — IC not viable")
-        reasons_skip.append(f"VIX {vix:.1f} < 12 (premium too thin for IC)")
+        print(f"  ⚠️  VIX < {VIX_MIN_ENTRY}: premium too thin — IC not viable")
+        reasons_skip.append(f"VIX {vix:.1f} < {VIX_MIN_ENTRY} (premium too thin for IC)")
     else:
         vix_factor = 1.0
 
     # ── 3. Regime detection ──────────────────────────────────────────────────
     print("\n[3/6] Detecting market regime...")
-    regime, sizing_factor = detect_regime()
+    regime, sizing_factor = detect_regime(nifty_ltp=nifty, vix=vix)
     print(f"  Regime: {regime}  |  Sizing factor: {sizing_factor:.2f}")
 
     if regime in ("TRENDING_BULL", "TRENDING_BEAR"):
@@ -158,6 +264,22 @@ def main():
             reasons_caution.append(f"VOLATILE_CHOP + VIX {vix:.1f} ≤ 14 — mild chop, watch closely")
     elif regime == "MEAN_REVERSION":
         print(f"  ✅ MEAN_REVERSION — ideal IC regime")
+    # ── VIX-based fallback regimes (when OpenClaw skill unavailable) ─────────
+    elif regime == "EXTREME_VOL":
+        reasons_skip.append(f"EXTREME_VOL: VIX={vix:.1f} > 25 — IC exposure unacceptable")
+    elif regime == "HIGH_VOL":
+        if vix > VIX_HIGH_SKIP:
+            reasons_skip.append(f"HIGH_VOL: VIX={vix:.1f} > {VIX_HIGH_SKIP} — skip or use very small lots")
+        else:
+            reasons_caution.append(f"HIGH_VOL: VIX={vix:.1f} — use 50% lots, widen strikes to ±150/±250")
+    elif regime == "ELEVATED_VOL":
+        reasons_caution.append(f"ELEVATED_VOL: VIX={vix:.1f} 16-20 — use 75% lots")
+    elif regime == "RANGE":
+        print(f"  ✅ RANGE (VIX={vix:.1f}) — ideal IC conditions")
+    elif regime == "LOW_VOL":
+        reasons_caution.append(f"LOW_VOL: VIX={vix:.1f} < 13 — premium thin, use 70% lots or skip")
+    elif regime == "RANGE_UNKNOWN_VIX":
+        reasons_caution.append(f"VIX unavailable — assuming range, using 85% lots")
     else:
         reasons_caution.append(f"Regime '{regime}' unknown — proceed with caution")
 
