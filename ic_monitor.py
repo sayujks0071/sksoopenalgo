@@ -31,7 +31,7 @@ _http.headers.update({"Content-Type": "application/json"})
 atexit.register(lambda: _http.close())  # 2.2: ensure cleanup on exit
 
 # ─── IC CONFIG (single source of truth) ──────────────────────────────────────
-sys.path.insert(0, "/Users/mac/openalgo")
+sys.path.insert(0, "/Users/mac/sksoopenalgo/openalgo")
 from ic_config import (OPENALGO_KEY as _IC_KEY, OPENALGO_URL as _IC_URL,
                        LOT_SIZE as _IC_LOT, SPAN_PER_LOT as _IC_SPAN,
                        get_next_expiry as _get_expiry,
@@ -811,11 +811,26 @@ def detect_ic_from_positions(positions: dict) -> dict | None:
     long_pe  = min((l["strike"] for l in pe_longs),  default=0)
     long_ce  = max((l["strike"] for l in ce_longs),  default=0)
 
-    # ── Imbalance detection: alert if CE/PE short qty differs by > 1.5× ─────
+    # ── Imbalance detection: alert >1.5× and HARD BLOCK >2.0× ──────────────
+    # CRITICAL FIX (2026-03-02): On 2026-03-02, 12 CE lots vs 6 PE lots created phantom
+    # directional delta. Root cause: Wave 1 PE fill partially rejected by Dhan RMS, but
+    # the CE short remained open. detect_ic_from_positions() must refuse to track such ICs.
+    # Block at 2.0× to catch the 12/6 scenario while allowing minor imbalances.
     ce_short_qty = sum(abs(s["qty"]) for s in ce_shorts)
     pe_short_qty = sum(abs(s["qty"]) for s in pe_shorts)
     _imbalance_ratio = max(ce_short_qty, pe_short_qty) / max(min(ce_short_qty, pe_short_qty), 1)
-    if _imbalance_ratio > 1.5:
+    if _imbalance_ratio > 2.0 and ce_short_qty > 0 and pe_short_qty > 0:
+        # Hard block: refuse IC detection for severely unbalanced ICs.
+        # The larger side is almost certainly a residual or duplicate entry — not a valid IC.
+        # Caller (monitor_loop) will exit cleanly and log for manual review.
+        log(
+            f"🚫 IC HARD BLOCK: CE_short_qty={ce_short_qty} vs PE_short_qty={pe_short_qty} "
+            f"(ratio={_imbalance_ratio:.1f}x > 2.0x) — severely unbalanced IC refused. "
+            f"Manual review required. Check for residual positions from prior session.",
+            "ERROR"
+        )
+        return None   # refuse to create IC — forces monitor to exit and alert
+    elif _imbalance_ratio > 1.5:
         log(
             f"⚠️  IC IMBALANCE: CE_short_qty={ce_short_qty} vs PE_short_qty={pe_short_qty} "
             f"(ratio={_imbalance_ratio:.1f}x) — directional delta exposure! "

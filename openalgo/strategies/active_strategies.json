@@ -4,27 +4,327 @@
         "underlying": "NIFTY",
         "type": "EQUITY",
         "exchange": "NSE",
+        "backtest": {
+            "pf": 1.37, "dd_pct": 0.98, "wr_pct": 30.0, "trades": 20,
+            "window": "58d 5m", "run_date": "2026-03-03",
+            "note": "v2: ADX>25+EMA50+RSI filter on NIFTYBEES.NS; PF improved 0.81→1.37 — REVIEW"
+        },
         "params": {
             "quantity": 25,
-            "sector": "NIFTY BANK"
+            "sector": "NIFTY BANK",
+            "adx_threshold": 25,
+            "adx_period": 14
         }
     },
     "AI_Hybrid_RELIANCE": {
         "strategy": "ai_hybrid_reversion_breakout",
         "symbol": "RELIANCE",
         "exchange": "NSE",
+        "backtest": {
+            "pf": 0.20, "dd_pct": 21.02, "wr_pct": 38.1, "trades": 21,
+            "window": "58d 5m", "run_date": "2026-03-03",
+            "note": "PF=0.20, DD=21% — PAUSE; RELIANCE trending sideways-down"
+        },
         "params": {
             "rsi_lower": 30,
             "sector": "NIFTY 50"
         }
     },
     "MCX_SILVER": {
-        "strategy": "mcx_commodity_momentum_strategy",
+        "strategy": "mcx_atr_trend_strategy",
         "underlying": "SILVER",
+        "symbol": "SILVERM30APR26FUT",
         "type": "FUT",
         "exchange": "MCX",
+        "product": "NRML",
+        "backtest": {
+            "pf": 11.76, "dd_pct": 1.1, "wr_pct": 67.9, "trades": 56,
+            "window": "58d 15m", "run_date": "2026-03-03",
+            "note": "v3 capital-norm DD: EMA21/55 RSI>58/<42 ADX>30 SL=1.0× Trail=1.5× — DEPLOY"
+        },
         "params": {
-            "quantity": 1
+            "quantity": 1,
+            "ema_fast": 21, "ema_slow": 55,
+            "rsi_buy": 58, "rsi_sell": 42,
+            "adx_threshold": 30,
+            "atr_sl": 1.0, "trail_atr": 1.5
         }
+    },
+    "ORB_SBIN": {
+        "strategy": "orb_equity_volume",
+        "symbol": "SBIN",
+        "exchange": "NSE",
+        "product": "MIS",
+        "capital": 200000,
+        "backtest": {
+            "pf": 2.60, "dd_pct": 1.07, "wr_pct": 41.7, "trades": 24,
+            "window": "90d 5m", "run_date": "2026-03-01"
+        },
+        "params": {
+            "quantity": 333,
+            "orb_minutes": 30,
+            "sl_pct": 0.5,
+            "tp_pct": 1.5,
+            "volume_multiplier": 1.7,
+            "max_hold_min": 90,
+            "gap_filter": true,
+            "max_orders_per_day": 2
+        }
+    },
+    "VWAP_RELIANCE": {
+        "strategy": "vwap_rsi_equity",
+        "symbol": "RELIANCE",
+        "exchange": "NSE",
+        "product": "MIS",
+        "capital": 150000,
+        "backtest": {
+            "pf": 2.58, "dd_pct": 1.18, "wr_pct": 60.0, "trades": 25,
+            "window": "90d 5m", "run_date": "2026-03-01"
+        },
+        "params": {
+            "quantity": 268,
+            "sl_pct": 0.4,
+            "vwap_std_mult": 1.5,
+            "rsi_oversold": 30,
+            "rsi_overbought": 70,
+            "max_orders_per_day": 4
+        }
+    },
+    "EMA_HDFCBANK": {
+        "strategy": "ema_supertrend_equity",
+        "symbol": "HDFCBANK",
+        "exchange": "NSE",
+        "product": "MIS",
+        "capital": 150000,
+        "backtest": {
+            "pf": 2.76, "dd_pct": 1.93, "wr_pct": 40.0, "trades": 15,
+            "window": "90d 5m", "run_date": "2026-03-01"
+        },
+        "params": {
+            "quantity": 696,
+            "atr_sl_mult": 1.5,
+            "atr_tp_mult": 3.0,
+            "supertrend_mult": 2.5,
+            "adx_min": 0,
+            "max_orders_per_day": 4
+        }
+    },
+    "MCX_GOLD": {
+        "strategy": "mcx_atr_trend_strategy",
+        "underlying": "GOLD",
+        "symbol": "GOLDM02APR26FUT",
+        "type": "FUT",
+        "exchange": "MCX",
+        "product": "NRML",
+        "backtest": {
+            "pf": 15.56, "dd_pct": 0.4, "wr_pct": 64.9, "trades": 37,
+            "window": "58d 15m", "run_date": "2026-03-03",
+            "note": "v3 capital-norm DD: EMA21/55 RSI>60/<50 ADX>30 SL=1.0× Trail=2.5× — DEPLOY"
+        },
+        "params": {
+            "quantity": 1,
+            "ema_fast": 21, "ema_slow": 55,
+            "rsi_buy": 60, "rsi_sell": 50,
+            "adx_threshold": 30,
+            "atr_sl": 1.0, "trail_atr": 2.5
+        }
+    },
+    "MCX_CRUDEOIL": {
+        "strategy": "mcx_atr_trend_strategy",
+        "underlying": "CRUDEOIL",
+        "symbol": "CRUDEOILM19MAR26FUT",
+        "type": "FUT",
+        "exchange": "MCX",
+        "product": "NRML",
+        "backtest": {
+            "pf": 3.45, "dd_pct": 0.0, "wr_pct": 53.2, "trades": 62,
+            "window": "58d 15m", "run_date": "2026-03-03",
+            "note": "v3 capital-norm DD: EMA13/55 RSI>55/<40 ADX>25 SL=1.0× Trail=2.0× — DEPLOY. ⚠️ ROLLOVER to APR by ~2026-03-15"
+        },
+        "params": {
+            "quantity": 1,
+            "ema_fast": 13, "ema_slow": 55,
+            "rsi_buy": 55, "rsi_sell": 40,
+            "adx_threshold": 25,
+            "atr_sl": 1.0, "trail_atr": 2.0
+        }
+    },
+    "NIFTY_WIDE_IC": {
+        "strategy": "nifty_weekly_ic_strategy",
+        "script": "scripts/nifty_weekly_ic_strategy.py",
+        "mode": "wide_ic",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 7.51, "dd_pct": 1.1, "wr_pct": 88.0, "trades": 50,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "S3 Wide IC: short OTM4 CE+PE / long OTM9 CE+PE; Mon entry 9:30-10:15, Thu close 14:50; SL=2.0× net credit, TP=70% captured — DEPLOY (PID 91590)"
+        },
+        "params": {
+            "quantity": 1,
+            "short_otm_offset": "OTM4",
+            "long_otm_offset": "OTM9",
+            "sl_mult": 2.0,
+            "tp_pct": 70,
+            "entry_day": "Monday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 91590,
+        "log": "logs/nifty_wide_ic_live.log",
+        "deploy_date": "2026-03-03"
+    },
+    "NIFTY_TREND_IC": {
+        "strategy": "nifty_weekly_ic_strategy",
+        "script": "scripts/nifty_weekly_ic_strategy.py",
+        "mode": "trend_ic",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 2.70, "dd_pct": 1.8, "wr_pct": 74.0, "trades": 46,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "S4 Trend IC: asymmetric condor, bull=short OTM4CE/OTM3PE, bear=short OTM3CE/OTM4PE; trend filter EMA5/EMA20 div≥0.5%; SL=1.5× — DEPLOY (PID 92010)"
+        },
+        "params": {
+            "quantity": 1,
+            "trend_threshold_pct": 0.5,
+            "sl_mult": 1.5,
+            "tp_pct": 70,
+            "entry_day": "Monday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 92010,
+        "log": "logs/nifty_trend_ic_live.log",
+        "deploy_date": "2026-03-03"
+    },
+    "NIFTY_BWB": {
+        "strategy": "nifty_weekly_ic_strategy",
+        "script": "scripts/nifty_weekly_ic_strategy.py",
+        "mode": "bwb",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 14.11, "dd_pct": 0.3, "wr_pct": 80.0, "trades": 10,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "S5 Broken-Wing Butterfly: sell ATM straddle, buy OTM5 CE + OTM8 PE; filter: EMA5/EMA20<1% AND EMA20>EMA50; SL=1.5× — DEPLOY (PID 92237)"
+        },
+        "params": {
+            "quantity": 1,
+            "call_wing": "OTM5",
+            "put_wing": "OTM8",
+            "flat_pct": 1.0,
+            "sl_mult": 1.5,
+            "tp_pct": 70,
+            "entry_day": "Monday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 92237,
+        "log": "logs/nifty_bwb_live.log",
+        "deploy_date": "2026-03-03"
+    },
+    "NIFTY_WED_W1": {
+        "strategy": "nifty_wednesday_ic_strategy",
+        "script": "scripts/nifty_wednesday_ic_strategy.py",
+        "mode": "w1",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 3.77, "dd_pct": 0.8, "wr_pct": 75.0, "trades": 8,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "W1 Theta Blitz IC: sell OTM4 CE+PE / buy OTM6 CE+PE; VIX 12-18; SL=2.0× TP=80%; Wed 09:30-10:15 entry, Thu 14:50 exit — DEPLOY (PID 97805)"
+        },
+        "params": {
+            "quantity": 1,
+            "short_otm": "OTM4",
+            "long_otm": "OTM6",
+            "vix_lo": 12,
+            "vix_hi": 18,
+            "sl_mult": 2.0,
+            "tp_pct": 80,
+            "entry_day": "Wednesday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 97805,
+        "log": "logs/nifty_wed_w1_live.log",
+        "deploy_date": "2026-03-04"
+    },
+    "NIFTY_WED_W2": {
+        "strategy": "nifty_wednesday_ic_strategy",
+        "script": "scripts/nifty_wednesday_ic_strategy.py",
+        "mode": "w2",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 3.26, "dd_pct": 0.2, "wr_pct": 83.3, "trades": 6,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "W2 2-Day Momentum CS: drift≥0.3%+EMA5/EMA20 confirm; bull→sell OTM5 PE+OTM8 PE, bear→sell OTM5 CE+OTM8 CE; VIX 10-25; SL=1.5× TP=85%; Wed 09:30-10:15 entry — DEPLOY (PID 97810)"
+        },
+        "params": {
+            "quantity": 1,
+            "drift_pct": 0.3,
+            "short_otm": "OTM5",
+            "long_otm": "OTM8",
+            "vix_lo": 10,
+            "vix_hi": 25,
+            "sl_mult": 1.5,
+            "tp_pct": 85,
+            "ema_confirm": true,
+            "entry_day": "Wednesday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 97810,
+        "log": "logs/nifty_wed_w2_live.log",
+        "deploy_date": "2026-03-04"
+    },
+    "NIFTY_WED_W3": {
+        "strategy": "nifty_wednesday_ic_strategy",
+        "script": "scripts/nifty_wednesday_ic_strategy.py",
+        "mode": "w3",
+        "underlying": "NIFTY",
+        "type": "OPTIONS",
+        "exchange": "NSE",
+        "product": "NRML",
+        "backtest": {
+            "pf": 2.51, "dd_pct": 0.2, "wr_pct": 60.0, "trades": 5,
+            "window": "58d weekly", "run_date": "2026-03-03",
+            "note": "W3 ATM Iron Fly: sell ATM CE+PE, buy OTM2 CE+PE; calm filter intraday<0.9%; VIX 13-22; SL=1.5× TP=50%; Wed 14:30-15:00 entry, Thu open early-exit+14:50 — DEPLOY (PID 97820)"
+        },
+        "params": {
+            "quantity": 1,
+            "calm_pct": 0.9,
+            "short_otm": "ATM",
+            "long_otm": "OTM2",
+            "vix_lo": 13,
+            "vix_hi": 22,
+            "sl_mult": 1.5,
+            "tp_pct": 50,
+            "thu_open_exit": true,
+            "entry_day": "Wednesday",
+            "exit_day": "Thursday"
+        },
+        "status": "DEPLOY",
+        "is_scheduled": true,
+        "pid": 97820,
+        "log": "logs/nifty_wed_w3_live.log",
+        "deploy_date": "2026-03-04"
     }
 }

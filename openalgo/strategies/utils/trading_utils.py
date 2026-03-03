@@ -15,7 +15,20 @@ import numpy as np
 import pandas as pd
 import pytz
 
-from utils import httpx_client
+class _HttpxClientStub:
+    """Wraps httpx.post/get and silently drops unsupported kwargs like max_retries/backoff_factor."""
+    _UNSUPPORTED = {"max_retries", "backoff_factor"}
+
+    def _clean(self, kwargs):
+        return {k: v for k, v in kwargs.items() if k not in self._UNSUPPORTED}
+
+    def post(self, url, **kwargs):
+        return httpx.post(url, **self._clean(kwargs))
+
+    def get(self, url, **kwargs):
+        return httpx.get(url, **self._clean(kwargs))
+
+httpx_client = _HttpxClientStub()
 
 # Configure logging
 try:
@@ -112,6 +125,10 @@ def calculate_intraday_vwap(df):
     # Ensure datetime is datetime object
     df["datetime"] = pd.to_datetime(df["datetime"])
     df["date"] = df["datetime"].dt.date
+
+    # Set DatetimeIndex so callers can use df.index.date safely
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.DatetimeIndex(df["datetime"])
 
     # Typical Price
     df["tp"] = (df["high"] + df["low"] + df["close"]) / 3
@@ -271,8 +288,16 @@ class PositionManager:
     Saves state to openalgo/strategies/state/{symbol}_state.json
     """
 
-    def __init__(self, symbol):
+    def __init__(self, symbol, **kwargs):
         self.symbol = symbol
+        # Accept extra kwargs from strategy scripts (exchange, product, api_key, host, strategy, quantity)
+        self._exchange = kwargs.get("exchange", "NSE")
+        self._product  = kwargs.get("product", "MIS")
+        self._api_key  = kwargs.get("api_key", os.environ.get("OPENALGO_APIKEY", ""))
+        self._host     = kwargs.get("host", os.environ.get("OPENALGO_HOST", "http://127.0.0.1:5002")).rstrip("/")
+        self._strategy = kwargs.get("strategy", "equity_strategy")
+        self._quantity = kwargs.get("quantity", 0)
+
         # Determine state directory relative to this file
         # this file: openalgo/strategies/utils/trading_utils.py
         # target: openalgo/strategies/state/
@@ -285,6 +310,52 @@ class PositionManager:
         self.pnl = 0.0
 
         self.load_state()
+
+    def get_net_position(self) -> int:
+        """Return current net position (positive=long, negative=short, 0=flat)."""
+        return self.position
+
+    def place_order(self, action: str, qty: int, target_pos: int) -> dict:
+        """
+        Place a market order via OpenAlgo placesmartorder endpoint.
+        action: 'BUY' or 'SELL'
+        qty: number of shares/contracts
+        target_pos: desired net position after order (used as position_size)
+        Returns dict with 'status' key: 'success' or 'error'.
+        """
+        url = f"{self._host}/api/v1/placesmartorder"
+        payload = {
+            "apikey": self._api_key,
+            "strategy": self._strategy,
+            "symbol": self.symbol,
+            "action": action,
+            "exchange": self._exchange,
+            "pricetype": "MARKET",
+            "product": self._product,
+            "quantity": str(qty),
+            "position_size": str(target_pos),
+            "price": "0",
+            "trigger_price": "0",
+            "disclosed_quantity": "0",
+        }
+        try:
+            resp = httpx.post(url, json=payload, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"status": "success", "message": "non-JSON 200 response"}
+                if data.get("status") == "success":
+                    self.update_position(qty, 0.0, action)
+                logger.info(f"place_order {action} {qty} {self.symbol}: {data}")
+                return data
+            else:
+                msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                logger.error(f"place_order failed: {msg}")
+                return {"status": "error", "message": msg}
+        except Exception as e:
+            logger.error(f"place_order exception: {e}")
+            return {"status": "error", "message": str(e)}
 
     def load_state(self):
         if self.state_file.exists():

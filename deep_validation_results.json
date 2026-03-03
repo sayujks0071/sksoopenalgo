@@ -1,0 +1,11 @@
+{
+  "weekly_ic_tuned": {
+    "pf": 22.9,
+    "wr_pct": 96.6,
+    "dd_pct": 0.07,
+    "trades": 58,
+    "net_pnl": 16616,
+    "ev": 286.49,
+    "sharpe": 18.24,
+    "p_value": 0.0,
+    "sig": 

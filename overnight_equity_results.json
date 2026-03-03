@@ -1,0 +1,44 @@
+{
+  "SuperTrend_NIFTY_v3": null,
+  "BankNIFTY_VWAP_v3": {
+    "pf": 1.0,
+    "wr_pct": 33.3,
+    "dd_pct": 0.9,
+    "trades": 6,
+    "net_pnl": -3,
+    "run_date": "2026-03-03"
+  },
+  "NIFTY_RSI_Pullback": null,
+  "BankNIFTY_ORB": {
+    "pf": 4.23,
+    "wr_pct": 46.7,
+    "dd_pct": 0.23,
+    "trades": 15,
+    "net_pnl": 10656,
+    "run_date": "2026-03-03"
+  },
+  "MCX_SILVER_v2": {
+    "pf": 3.91,
+    "wr_pct": 70.0,
+    "dd_pct": 2.75,
+    "trades": 10,
+    "net_pnl": 10410,
+    "run_date": "2026-03-03"
+  },
+  "MCX_GOLD_v2": {
+    "pf": 3.73,
+    "wr_pct": 60.0,
+    "dd_pct": 1.8,
+    "trades": 15,
+    "net_pnl": 7861,
+    "run_date": "2026-03-03"
+  },
+  "MCX_CrudeOil_v2": {
+    "pf": 0.53,
+    "wr_pct": 28.9,
+    "dd_pct": 8.43,
+    "trades": 38,
+    "net_pnl": -3094,
+    "run_date": "2026-03-03"
+  }
+}

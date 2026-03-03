@@ -1,0 +1,42 @@
+{
+  "SuperTrend_NIFTY_v2": {
+    "pf": 1.24,
+    "wr_pct": 26.1,
+    "dd_pct": 1.03,
+    "trades": 23,
+    "net_pnl": 3140.0,
+    "window": "58d 5m",
+    "run_date": "2026-03-04",
+    "symbol": "NIFTY (NIFTYBEES.NS)"
+  },
+  "BankNIFTY_VWAP_v2": {
+    "pf": 1.13,
+    "wr_pct": 28.0,
+    "dd_pct": 1.36,
+    "trades": 25,
+    "net_pnl": 2385.0,
+    "window": "58d 5m",
+    "run_date": "2026-03-04",
+    "symbol": "BANKNIFTY (BANKBEES.NS)"
+  },
+  "MCX_GOLD": {
+    "pf": 2.08,
+    "wr_pct": 61.9,
+    "dd_pct": 1.09,
+    "trades": 21,
+    "net_pnl": 2340.0,
+    "window": "58d 15m",
+    "run_date": "2026-03-04",
+    "symbol": "GOLDBEES.NS"
+  },
+  "MCX_CRUDEOIL": {
+    "pf": 0.93,
+    "wr_pct": 34.8,
+    "dd_pct": 7.46,
+    "trades": 115,
+    "net_pnl": -1861.0,
+    "window": "58d 15m",
+    "run_date": "2026-03-04",
+    "symbol": "BZ=F (Brent proxy)"
+  }
+}

@@ -33,6 +33,32 @@ def ratelimit_handler(e):
     return jsonify(error="Rate limit exceeded"), 429
 
 
+@brlogin_bp.route("/callback", methods=["GET", "POST"])
+def dhan_generic_callback():
+    """Handle Dhan OAuth callback at /callback.
+
+    Dhan's developer portal registers http://localhost:5002/callback as the OAuth
+    redirect URL (visible in the webhookUrl field of the existing DHAN_ACCESS_TOKEN JWT).
+    After OTP verification, Dhan redirects to this URL with a tokenId query parameter.
+    This route forwards the request directly to /dhan/callback preserving all query params.
+    """
+    token_id = (
+        request.args.get("tokenId")
+        or request.args.get("token_id")
+        or request.args.get("token")
+    )
+
+    if token_id:
+        qs = request.query_string.decode()
+        logger.info(f"Generic /callback received tokenId — forwarding to /dhan/callback?{qs}")
+        return redirect(f"/dhan/callback?{qs}")
+
+    # No tokenId present — serve React SPA as normal fallback
+    from blueprints.react_app import serve_react_app
+
+    return serve_react_app()
+
+
 @brlogin_bp.route("/<broker>/callback", methods=["POST", "GET"])
 @limiter.limit(LOGIN_RATE_LIMIT_MIN)
 @limiter.limit(LOGIN_RATE_LIMIT_HOUR)
@@ -41,8 +67,12 @@ def broker_callback(broker, para=None):
     logger.debug(f"Session contents: {dict(session)}")
     logger.info(f"Session has user key: {'user' in session}")
 
+    # Special handling for Dhan - OAuth round-trip to auth.dhan.co loses the Flask session
+    # because the session cookie is set for 127.0.0.1 but Dhan redirects to localhost
+    if broker == "dhan" and "user" not in session:
+        logger.info("Dhan callback without session (cookie domain mismatch 127.0.0.1/localhost) - will recover username from DB after token validation")
     # Special handling for Compositedge - it comes from external OAuth and might lose session
-    if broker == "compositedge" and "user" not in session:
+    elif broker == "compositedge" and "user" not in session:
         # For Compositedge OAuth callback, we'll handle authentication differently
         # The session will be established after successful auth token validation
         logger.info("Compositedge callback without session - will establish session after auth")
@@ -703,8 +733,22 @@ def broker_callback(broker, para=None):
 
         # For brokers that have user_id and feed_token from authenticate_broker
         if broker in ["angel", "compositedge", "pocketful", "definedge", "dhan"]:
+            # For Dhan, handle missing session user (cookie domain mismatch 127.0.0.1 vs localhost)
+            if broker == "dhan" and "user" not in session:
+                from database.user_db import find_user_by_username
+
+                admin_user = find_user_by_username()
+                if admin_user:
+                    username = admin_user.username
+                    session["user"] = username
+                    logger.info(f"Dhan callback: recovered session user from DB: {username}")
+                else:
+                    logger.error("No user found in database for Dhan callback")
+                    return handle_auth_failure(
+                        "No user account found. Please login first.", forward_url="broker.html"
+                    )
             # For Compositedge, handle missing session user
-            if broker == "compositedge" and "user" not in session:
+            elif broker == "compositedge" and "user" not in session:
                 # Get the admin user from the database
                 from database.user_db import find_user_by_username
 
@@ -732,6 +776,60 @@ def broker_callback(broker, para=None):
             return handle_auth_success(auth_token, session["user"], broker, feed_token=feed_token)
     else:
         return handle_auth_failure(error_message, forward_url=forward_url)
+
+
+@brlogin_bp.route("/auto-login", methods=["GET"])
+def auto_login():
+    """One-click auto-login using the stored DB auth token. Localhost-only.
+
+    Bookmark http://127.0.0.1:5002/auto-login and use it each morning instead
+    of going through Dhan's OAuth flow. Requires the 8 AM cron
+    (dhan_trading_login.py) to have run first so the DB has a valid token.
+
+    Flow:
+        1. Browser GETs http://127.0.0.1:5002/auto-login
+        2. Reads stored Dhan auth token from DB
+        3. Validates token against Dhan funds API
+        4. Creates Flask session (same as normal broker login)
+        5. Redirects to /python strategy page
+    """
+    # Security: only accessible from localhost
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify({"error": "Forbidden — localhost only"}), 403
+
+    from database.auth_db import get_auth_token
+    from database.user_db import find_user_by_username
+
+    admin_user = find_user_by_username()
+    if not admin_user:
+        return redirect(url_for("auth.login"))
+
+    username = admin_user.username
+    # session["user"] must be set before handle_auth_success stores broker
+    session["user"] = username
+
+    auth_token = get_auth_token(username)
+    if not auth_token:
+        logger.warning("[auto-login] No auth token in DB — run morning cron first")
+        return (
+            "<h2>No auth token found.</h2>"
+            "<p>Run: <code>python3 /Users/mac/openalgo/scripts/dhan_trading_login.py</code></p>"
+        ), 503
+
+    # Validate token is still accepted by Dhan
+    from broker.dhan.api.funds import test_auth_token
+
+    is_valid, validation_error = test_auth_token(auth_token)
+    if not is_valid:
+        logger.warning(f"[auto-login] Token invalid: {validation_error}")
+        return (
+            f"<h2>Auth token rejected by Dhan.</h2><p>{validation_error}</p>"
+            f"<p>Re-run: <code>python3 /Users/mac/openalgo/scripts/dhan_trading_login.py</code></p>"
+        ), 503
+
+    logger.info(f"[auto-login] Token valid — creating session for {username}")
+    # handle_auth_success sets logged_in=True, login_time, broker, etc. and redirects
+    return handle_auth_success(auth_token, username, "dhan")
 
 
 @brlogin_bp.route("/dhan/initiate-oauth", methods=["GET", "POST"])

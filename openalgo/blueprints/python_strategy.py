@@ -401,11 +401,14 @@ def start_strategy_process(strategy_id):
                     logger.warning(f"Could not set execute permission: {e}")
                     # Continue anyway, Python can still run it
 
-        # Check if master contracts are ready before starting strategy
-        contracts_ready, contract_message = check_master_contract_ready()
-        if not contracts_ready:
-            logger.warning(f"Cannot start strategy {strategy_id}: {contract_message}")
-            return False, f"Master contract dependency not met: {contract_message}"
+        # Check if master contracts are ready before starting strategy.
+        # Strategies that call OpenAlgo APIs directly (e.g. IC monitor) can set
+        # "skip_master_contract_check": true in their config to bypass this gate.
+        if not config.get("skip_master_contract_check"):
+            contracts_ready, contract_message = check_master_contract_ready()
+            if not contracts_ready:
+                logger.warning(f"Cannot start strategy {strategy_id}: {contract_message}")
+                return False, f"Master contract dependency not met: {contract_message}"
 
         try:
             # Create log file for this run with IST timestamp

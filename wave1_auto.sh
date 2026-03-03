@@ -25,7 +25,7 @@ if [ $STATUS -eq 2 ]; then
   log "🔴 SKIP — gate says DO NOT TRADE today. Aborting."
   exit 0
 elif [ $STATUS -eq 1 ]; then
-  log "🟡 CAUTION — proceeding with 12 lots (monitoring closely)"
+  log "🟡 CAUTION — proceeding with 20 lots (~60% position, monitoring closely)"
 fi
 
 # ── ORDERS: delegate to ic_order_executor.py (atomic + fill-verified) ──────
@@ -51,8 +51,40 @@ requests.post('https://sayujks20417.app.n8n.cloud/webhook/ic-trading-alert',
     exit 1
 fi
 
-log "✅ Wave 1 COMPLETE — starting ic_monitor.py..."
-pkill -f ic_monitor.py 2>/dev/null; sleep 1
-nohup /opt/homebrew/bin/python3 /Users/mac/openalgo/ic_monitor.py \
-    >> /Users/mac/openalgo/ic_monitor.log 2>&1 &
-log "ic_monitor.py started PID=$!"
+log "✅ Wave 1 COMPLETE — verifying positions..."
+
+# 1.10: Wait for fill propagation, verify positions exist
+sleep 5
+POS_COUNT=$(python3 -c "
+import requests, json
+from ic_config import OPENALGO_KEY, OPENALGO_URL
+r = requests.post(f'{OPENALGO_URL}/positionbook', json={'apikey': OPENALGO_KEY}, timeout=10)
+data = r.json().get('data', []) or []
+count = sum(1 for p in data if abs(int(p.get('quantity', 0))) > 0
+            and ('CE' in p.get('symbol','') or 'PE' in p.get('symbol','')))
+print(count)
+" 2>/dev/null || echo "0")
+log "Open option positions found: $POS_COUNT"
+
+if [ "$POS_COUNT" -lt 2 ]; then
+    log "⚠️  <2 positions after 5s — waiting 10s more for propagation..."
+    sleep 10
+    POS_COUNT=$(python3 -c "
+import requests, json
+from ic_config import OPENALGO_KEY, OPENALGO_URL
+r = requests.post(f'{OPENALGO_URL}/positionbook', json={'apikey': OPENALGO_KEY}, timeout=10)
+data = r.json().get('data', []) or []
+count = sum(1 for p in data if abs(int(p.get('quantity', 0))) > 0
+            and ('CE' in p.get('symbol','') or 'PE' in p.get('symbol','')))
+print(count)
+" 2>/dev/null || echo "0")
+    log "Open option positions after retry: $POS_COUNT"
+    if [ "$POS_COUNT" -lt 2 ]; then
+        log "❌ Still <2 positions. Check positions manually."
+    fi
+fi
+
+# ic_monitor is managed by OpenAlgo's Python Strategy system (ic_nifty_monitor).
+# It auto-starts at 9:20 AM via the strategy scheduler and will detect these
+# positions on its next positionbook poll. No action needed here.
+log "✅ Wave 1 done. ic_monitor running via OpenAlgo strategy host (ic_nifty_monitor)."

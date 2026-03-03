@@ -1,0 +1,85 @@
+{
+  "E1_Weekly_IC_1SD": {
+    "pf": 2.0,
+    "wr_pct": 79.3,
+    "dd_pct": 1.6,
+    "trades": 29,
+    "net_pnl": 32491,
+    "run_date": "2026-03-03"
+  },
+  "E2_Managed_Straddle": {
+    "pf": 0.68,
+    "wr_pct": 45.0,
+    "dd_pct": 13.72,
+    "trades": 20,
+    "net_pnl": -31445,
+    "run_date": "2026-03-03"
+  },
+  "E3_Directional_Debit_Spread": {
+    "pf": 0.68,
+    "wr_pct": 34.5,
+    "dd_pct": 16.81,
+    "trades": 58,
+    "net_pnl": -55045,
+    "run_date": "2026-03-03"
+  },
+  "E4_Post_Spike_IC": {
+    "pf": 99.0,
+    "wr_pct": 100.0,
+    "dd_pct": 0.0,
+    "trades": 2,
+    "net_pnl": 5003,
+    "run_date": "2026-03-03"
+  },
+  "E5_Low_VIX_Butterfly": {
+    "pf": 1.14,
+    "wr_pct": 47.1,
+    "dd_pct": 4.3,
+    "trades": 17,
+    "net_pnl": 7212,
+    "run_date": "2026-03-03"
+  },
+  "E6_Fortnightly_IC": {
+    "pf": 6.45,
+    "wr_pct": 91.7,
+    "dd_pct": 1.88,
+    "trades": 36,
+    "net_pnl": 145549,
+    "run_date": "2026-03-03"
+  },
+  "E7_BankNIFTY_Straddle": {
+    "pf": 1.49,
+    "wr_pct": 67.9,
+    "dd_pct": 5.16,
+    "trades": 28,
+    "net_pnl": 36266,
+    "run_date": "2026-03-03"
+  },
+  "E1_Weekly_IC_OPTIMIZED": {
+    "pf": 9.55,
+    "wr_pct": 92.6,
+    "dd_pct": 0.38,
+    "trades": 27,
+    "net_pnl": 31900,
+    "run_date": "2026-03-03",
+    "params": {
+      "sd_otm": 1.4,
+      "vix_hi": 16,
+      "sl": 1.5
+    }
+  },
+  "E2_Managed_Straddle_OPTIMIZED": {
+    "pf": 1.22,
+    "wr_pct": 52.4,
+    "dd_pct": 5.63,
+    "trades": 21,
+    "net_pnl": 17234,
+    "run_date": "2026-03-03",
+    "params": {
+      "wing_sd": 2.0,
+      "vix_hi": 18,
+      "pt": 0.4,
+      "sl": 1.3
+    }
+  }
+}

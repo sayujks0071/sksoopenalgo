@@ -1,0 +1,94 @@
+{
+  "O1_Wide_IC_NIFTY_Monthly": {
+    "pf": 0.11,
+    "wr_pct": 13.6,
+    "dd_pct": 20.41,
+    "trades": 22,
+    "net_pnl": -99634,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O2_Iron_Butterfly_Monthly": {
+    "pf": 0.05,
+    "wr_pct": 20.0,
+    "dd_pct": 20.15,
+    "trades": 10,
+    "net_pnl": -99487,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O3_BiWeekly_IC_NIFTY": {
+    "pf": 0.19,
+    "wr_pct": 25.9,
+    "dd_pct": 9.67,
+    "trades": 27,
+    "net_pnl": -47871,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O4_VIX_Sized_IC": {
+    "pf": NaN,
+    "wr_pct": 0.0,
+    "dd_pct": 0.0,
+    "trades": 54,
+    "net_pnl": 0,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O5_Asymmetric_Butterfly": {
+    "pf": 0.06,
+    "wr_pct": 14.8,
+    "dd_pct": 72.98,
+    "trades": 27,
+    "net_pnl": -351510,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O6_Dual_NIFTY_BankNIFTY_IC": {
+    "pf": 0.08,
+    "wr_pct": 17.5,
+    "dd_pct": 61.92,
+    "trades": 40,
+    "net_pnl": -300495,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O7_Profit_Target_IC": {
+    "pf": 0.26,
+    "wr_pct": 31.8,
+    "dd_pct": 14.26,
+    "trades": 22,
+    "net_pnl": -68682,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options"
+  },
+  "O1_Wide_IC_OPTIMIZED": {
+    "pf": 0.22,
+    "wr_pct": 29.7,
+    "dd_pct": 6.66,
+    "trades": 37,
+    "net_pnl": -32776,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options",
+    "params": {
+      "c_otm": 200,
+      "flat_pct": 2.0,
+      "hold": 14
+    }
+  },
+  "O2_Iron_Butterfly_OPTIMIZED": {
+    "pf": 0.07,
+    "wr_pct": 20.0,
+    "dd_pct": 16.15,
+    "trades": 10,
+    "net_pnl": -79072,
+    "run_date": "2026-03-03",
+    "window": "500d monthly-options",
+    "params": {
+      "flat": 0.5,
+      "call_w": 300,
+      "put_w": 300,
+      "sl": 1.3
+    }
+  }
+}

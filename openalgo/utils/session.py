@@ -162,8 +162,9 @@ def check_session_validity(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not is_session_valid():
-            # Revoke tokens before clearing session
-            revoke_user_tokens()
+            # Preserve DB auth token so ic_monitor's API calls keep working after
+            # session expiry (3 AM). The morning cron re-validates at 8 AM.
+            revoke_user_tokens(revoke_db_tokens=False)
             session.clear()
 
             # Check if this is an AJAX/fetch request

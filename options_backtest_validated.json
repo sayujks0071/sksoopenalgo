@@ -1,0 +1,154 @@
+{
+  "NIFTY_Weekly_IC": {
+    "pf": 4.48,
+    "wr": 86.4,
+    "dd": 0.43,
+    "T": 88,
+    "sharpe": 5.65,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 4.25,
+    "ev": 772.6,
+    "net": 67985,
+    "params": {
+      "sd_otm": 1.4,
+      "vix_hi": 16,
+      "sl_mult": 1.5,
+      "lot": 65,
+      "step": 50
+    }
+  },
+  "NIFTY_Biweekly_IC": {
+    "pf": 5.28,
+    "wr": 89.6,
+    "dd": 1.06,
+    "T": 48,
+    "sharpe": 6.28,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 10.66,
+    "ev": 2411.9,
+    "net": 115770,
+    "params": {
+      "sd_otm": 1.2,
+      "vix_hi": 18,
+      "sl_mult": 2.0,
+      "lot": 65,
+      "step": 50
+    }
+  },
+  "NIFTY_Monthly_IC": {
+    "pf": 1.79,
+    "wr": 76.9,
+    "dd": 7.29,
+    "T": 26,
+    "sharpe": 2.0,
+    "p": 0.1784,
+    "sig": false,
+    "pf_oos": 1.58,
+    "ev": 2686.1,
+    "net": 69837,
+    "params": {
+      "sd_otm": 1.0,
+      "vix_hi": 20,
+      "sl_mult": 2.5,
+      "lot": 65,
+      "step": 50
+    }
+  },
+  "SENSEX_Weekly_IC": {
+    "pf": 5.26,
+    "wr": 87.5,
+    "dd": 0.37,
+    "T": 96,
+    "sharpe": 6.41,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 6.01,
+    "ev": 831.8,
+    "net": 79851,
+    "params": {
+      "sd_otm": 1.4,
+      "vix_hi": 18,
+      "sl_mult": 1.5,
+      "lot": 20,
+      "step": 100
+    }
+  },
+  "SENSEX_Biweekly_IC": {
+    "pf": 6.56,
+    "wr": 92.0,
+    "dd": 1.07,
+    "T": 50,
+    "sharpe": 7.17,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 99,
+    "ev": 2597.2,
+    "net": 129860,
+    "params": {
+      "sd_otm": 1.2,
+      "vix_hi": 20,
+      "sl_mult": 2.0,
+      "lot": 20,
+      "step": 100
+    }
+  },
+  "SENSEX_Monthly_IC": {
+    "pf": 1.74,
+    "wr": 77.8,
+    "dd": 8.59,
+    "T": 27,
+    "sharpe": 1.89,
+    "p": 0.1926,
+    "sig": false,
+    "pf_oos": 1.31,
+    "ev": 2678.5,
+    "net": 72321,
+    "params": {
+      "sd_otm": 1.0,
+      "vix_hi": 22,
+      "sl_mult": 2.5,
+      "lot": 20,
+      "step": 100
+    }
+  },
+  "NIFTY_Weekly_TUNED": {
+    "pf": 9.68,
+    "wr": 91.0,
+    "dd": 0.18,
+    "T": 100,
+    "sharpe": 9.62,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 10.55,
+    "ev": 638.4,
+    "net": 63843,
+    "params": {
+      "sd_otm": 1.6,
+      "vix_hi": 20,
+      "sl_mult": 1.2,
+      "lot": 65,
+      "step": 50
+    }
+  },
+  "SENSEX_Weekly_TUNED": {
+    "pf": 9.18,
+    "wr": 91.3,
+    "dd": 0.19,
+    "T": 103,
+    "sharpe": 9.3,
+    "p": 0.0,
+    "sig": true,
+    "pf_oos": 11.73,
+    "ev": 641.9,
+    "net": 66121,
+    "params": {
+      "sd_otm": 1.6,
+      "vix_hi": 22,
+      "sl_mult": 1.2,
+      "lot": 20,
+      "step": 100
+    }
+  }
+}

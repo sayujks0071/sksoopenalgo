@@ -180,9 +180,29 @@ class DhanWebSocket:
                     )
                     time.sleep(delay)
             else:
-                # Reset reconnect attempt counter on successful connection
+                # run_forever() returned without raising an exception.
+                # This can happen when the server rejects the handshake (e.g., 429 Too Many
+                # Requests) - in that case self.connected stays False and we must still apply
+                # exponential backoff before retrying, otherwise we hammer the server.
                 if self.connected:
+                    # Clean close after a successful session – reset counter
                     reconnect_attempt = 0
+                elif self.running:
+                    # Rejected handshake (429, auth error, etc.) – apply backoff
+                    reconnect_attempt += 1
+                    if reconnect_attempt >= max_reconnect_attempts:
+                        self.logger.error(
+                            f"Maximum reconnection attempts ({max_reconnect_attempts}) reached "
+                            f"(handshake rejected). Stopping WebSocket."
+                        )
+                        self.running = False
+                        break
+                    delay = min(base_delay * (2 ** (reconnect_attempt - 1)), max_delay)
+                    self.logger.warning(
+                        f"WebSocket handshake rejected (e.g., 429). "
+                        f"Reconnecting in {delay}s... (attempt {reconnect_attempt}/{max_reconnect_attempts})"
+                    )
+                    time.sleep(delay)
 
     def disconnect(self):
         """Disconnect from WebSocket"""

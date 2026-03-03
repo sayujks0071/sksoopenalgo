@@ -1,0 +1,32 @@
+{
+  "SuperTrend_NIFTY": {
+    "pf": 0.81,
+    "wr_pct": 26.7,
+    "dd_pct": 1.96,
+    "trades": 45,
+    "net_pnl": -4860.0,
+    "window": "58d 5m",
+    "run_date": "2026-03-04",
+    "symbol": "NIFTY (^NSEI)"
+  },
+  "AI_Hybrid_RELIANCE": {
+    "pf": 0.2,
+    "wr_pct": 38.1,
+    "dd_pct": 21.02,
+    "trades": 21,
+    "net_pnl": -34170.0,
+    "window": "58d 5m",
+    "run_date": "2026-03-04",
+    "symbol": "RELIANCE.NS"
+  },
+  "MCX_SILVER": {
+    "pf": 2.98,
+    "wr_pct": 60.9,
+    "dd_pct": 1.66,
+    "trades": 23,
+    "net_pnl": 4288.0,
+    "window": "58d 15m",
+    "run_date": "2026-03-04",
+    "symbol": "SILVER.NS"
+  }
+}

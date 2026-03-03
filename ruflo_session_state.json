@@ -1,0 +1,114 @@
+{
+  "seed": {
+    "mode": "seed",
+    "timestamp": "2026-03-02 09:09:14 IST",
+    "session_date": "2026-03-02",
+    "expiry": "05MAR26",
+    "ic_config": {
+      "ic_lot_size": 65,
+      "ic_span_per_lot": 32000,
+      "ic_max_daily_loss": -101000,
+      "ic_weekly_loss_limit": -50000,
+      "ic_max_consec_losses": 2,
+      "ic_vix_min_entry": 13.0,
+      "ic_premium_close_pct": 0.75,
+      "ic_premium_close_after": 0.6,
+      "ic_premium_stop_mult": 2.0,
+      "ic_gamma_full_pts": 30,
+      "ic_gamma_partial_pts": 60,
+      "ic_roll_zone_pts": 80,
+      "ic_trail_lock_thresh": 40000,
+      "ic_trail_lock_pct": 0.7,
+      "ic_vix_spike_trigger": 0.15,
+      "ic_wave2_min_mtm": 0,
+      "ic_wave3_min_mtm": 35000,
+      "ic_max_lots_hardcap": 40,
+      "ic_min_lots": 6
+    },
+    "ic_session": {
+      "session_date": "2026-03-02",
+      "expiry": "05MAR26",
+      "wave1_done": false,
+      "wave2_done": false,
+      "wave3_done": false,
+      "current_mtm": 0,
+      "peak_mtm": 0,
+      "entry_credit": 0,
+      "entry_lots": 0,
+      "entry_vix": 0.0,
+      "entry_regime": "UNKNOWN",
+      "entry_atm": 0,
+      "ce_closed": false,
+      "pe_closed": false,
+      "trajectory_id": ""
+    },
+    "ruflo_instructions": {
+      "memory_namespace_config": "ic_config",
+      "memory_namespace_session": "ic_session",
+      "memory_upsert": true,
+      "workflow_name": "monday_morning_ic_session",
+      "session_start_context": "IC session 2026-03-02, expiry 05MAR26"
+    }
+  },
+  "last_updated": "2026-03-02 09:09:14 IST",
+  "wave_vote_2": {
+    "mode": "wave_vote_2",
+    "timestamp": "2026-03-02 01:02:13 IST",
+    "wave": 2,
+    "consensus": true,
+    "verdict": "\u2705 PROCEED",
+    "votes": {
+      "RiskAgent": {
+        "vote": true,
+        "reason": "MTM \u20b90 \u2265 threshold \u20b90"
+      },
+      "RegimeAgent": {
+        "vote": false,
+        "reason": "VIX=0.0(BAD), regime=UNKNOWN(BAD), NIFTY +0pt(OK)"
+      },
+      "MTMAgent": {
+        "vote": true,
+        "reason": "No peak data \u2014 MTM \u20b90 (\u22650)"
+      }
+    },
+    "yes_count": 2,
+    "session_mtm": 0,
+    "peak_mtm": 0,
+    "vix": 0.0,
+    "regime": "UNKNOWN",
+    "ruflo_hive_proposal": {
+      "type": "wave_execute",
+      "value": {
+        "wave": 2,
+        "session_mtm": 0,
+        "yes_count": 2,
+        "consensus": true
+      }
+    }
+  },
+  "post_session": {
+    "mode": "post_session",
+    "timestamp": "2026-03-02 01:02:31 IST",
+    "session_date": "2026-03-02",
+    "final_pnl": 0,
+    "peak_mtm": 0,
+    "pct_captured": 0.0,
+    "quality": 0.5,
+    "success": false,
+    "entry_vix": 0.0,
+    "entry_credit": 0,
+    "lots": 0,
+    "regime": "UNKNOWN",
+    "wave2_done": false,
+    "wave3_done": false,
+    "adjustments": 0,
+    "new_patterns": [],
+    "ruflo_instructions": {
+      "trajectory_end_success": false,
+      "trajectory_quality": 0.5,
+      "session_store_key": "ic_session_2026-03-02",
+      "session_store_namespace": "ic_historical",
+      "run_learn_consolidate": true
+    }
+  }
+}

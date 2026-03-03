@@ -1,0 +1,94 @@
+{
+  "W1_VIX_Adaptive_IC_NIFTY": {
+    "pf": 0.56,
+    "wr_pct": 47.2,
+    "dd_pct": 0.37,
+    "trades": 36,
+    "net_pnl": -1313,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W2_BrokenWing_Butterfly_NIFTY": {
+    "pf": 0.04,
+    "wr_pct": 6.2,
+    "dd_pct": 12.68,
+    "trades": 16,
+    "net_pnl": -68823,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W3_Theta_Decay_IC_NIFTY": {
+    "pf": 0.24,
+    "wr_pct": 40.0,
+    "dd_pct": 0.76,
+    "trades": 25,
+    "net_pnl": -3926,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W4_Spike_Reversion_NIFTY": {
+    "pf": 0.0,
+    "wr_pct": 0.0,
+    "dd_pct": 0.0,
+    "trades": 1,
+    "net_pnl": -41,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W5_Directional_Spread_NIFTY": {
+    "pf": 0.62,
+    "wr_pct": 62.5,
+    "dd_pct": 0.24,
+    "trades": 16,
+    "net_pnl": -626,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W6_Short_Straddle_NIFTY": {
+    "pf": 0.02,
+    "wr_pct": 9.1,
+    "dd_pct": 9.33,
+    "trades": 11,
+    "net_pnl": -50977,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W7_SENSEX_BWB": {
+    "pf": 0.05,
+    "wr_pct": 11.1,
+    "dd_pct": 16.38,
+    "trades": 18,
+    "net_pnl": -33618,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W8_Composite_NIFTY": {
+    "pf": 0.4,
+    "wr_pct": 48.1,
+    "dd_pct": 0.42,
+    "trades": 77,
+    "net_pnl": -1955,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  },
+  "W1_VIX_Adaptive_IC_NIFTY_OPTIMIZED": {
+    "pf": 0.74,
+    "wr_pct": 47.2,
+    "dd_pct": 0.27,
+    "trades": 36,
+    "net_pnl": -574,
+    "run_date": "2026-03-03",
+    "params": {
+      "sl_mult": 1.5
+    }
+  },
+  "W9_SENSEX_Adaptive_IC": {
+    "pf": 0.23,
+    "wr_pct": 31.5,
+    "dd_pct": 3.4,
+    "trades": 54,
+    "net_pnl": -7068,
+    "run_date": "2026-03-03",
+    "window": "400d weekly"
+  }
+}

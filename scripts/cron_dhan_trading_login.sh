@@ -19,6 +19,12 @@ fi
 
 echo "==================================================" >> "$LOG_FILE"
 echo "Dhan login check at $(date)" >> "$LOG_FILE"
+
+# Activate virtual environment if it exists
+if [ -f "$PROJECT_DIR/openalgo/.venv/bin/activate" ]; then
+  source "$PROJECT_DIR/openalgo/.venv/bin/activate"
+fi
+
 python3 "$PROJECT_DIR/scripts/dhan_trading_login.py" >> "$LOG_FILE" 2>&1
 echo "Exit $? at $(date)" >> "$LOG_FILE"
 echo "==================================================" >> "$LOG_FILE"

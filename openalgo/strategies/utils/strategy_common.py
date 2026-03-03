@@ -151,6 +151,12 @@ class RiskManager:
         self.entry_price = price
         self.entry_time = datetime.now()
 
+    def clear(self):
+        """Reset risk state after position is closed."""
+        self.entry_price = 0
+        self.entry_time = None
+        self.side = None
+
     def should_exit(self, current_price):
         if not self.entry_time:
             return False, ""
@@ -177,3 +183,39 @@ class RiskManager:
             return True, "take_profit"
 
         return False, ""
+
+
+class PositionSync:
+    """
+    Periodically syncs local position state with broker (every N iterations).
+    If a mismatch is found, optionally pauses trading for a cooldown period.
+    """
+
+    def __init__(self, sync_every_n: int = 10, pause_on_mismatch_sec: int = 120):
+        self._n = max(1, sync_every_n)
+        self._pause_sec = pause_on_mismatch_sec
+        self._counter = 0
+        self._pause_until = 0.0
+
+    def is_paused(self) -> bool:
+        """Returns True if currently in a mismatch-pause cooldown."""
+        return time.time() < self._pause_until
+
+    def tick(self) -> bool:
+        """Call once per loop iteration. Returns True when it's time to sync with broker."""
+        self._counter += 1
+        if self._counter >= self._n:
+            self._counter = 0
+            return True
+        return False
+
+    def reconcile(self, local_pos: int, broker_pos: int):
+        """
+        Compare local position to broker position.
+        Returns (True, "ok") on match, (False, reason_str) on mismatch.
+        On mismatch, activates a pause for pause_on_mismatch_sec seconds.
+        """
+        if local_pos == broker_pos:
+            return True, "ok"
+        self._pause_until = time.time() + self._pause_sec
+        return False, f"mismatch: local={local_pos} broker={broker_pos}"
