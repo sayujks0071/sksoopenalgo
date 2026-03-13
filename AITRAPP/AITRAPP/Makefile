@@ -27,7 +27,7 @@ paper: ## Run in PAPER mode (safe simulation)
 	fi; \
 	PORT=$${PORT:-8000}; \
 	export APP_MODE=PAPER; \
-	python -m uvicorn apps.api.main:app --host 0.0.0.0 --port $$PORT
+	python3 -m uvicorn apps.api.main:app --host 0.0.0.0 --port $$PORT
 
 live: ## Run in LIVE mode (⚠️ REAL TRADING - USE WITH CAUTION)
 	@echo "╔════════════════════════════════════════════════╗"
@@ -39,7 +39,7 @@ live: ## Run in LIVE mode (⚠️ REAL TRADING - USE WITH CAUTION)
 	@echo "╚════════════════════════════════════════════════╝"
 	@read -p "Confirmation: " confirm; \
 	if [ "$$confirm" = "CONFIRM LIVE TRADING" ]; then \
-		export APP_MODE=LIVE && python -m apps.api.main; \
+		export APP_MODE=LIVE && python3 -m apps.api.main; \
 	else \
 		echo "❌ Confirmation failed. Aborting."; \
 		exit 1; \

@@ -7,6 +7,43 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _normalize_order_collection(order_data):
+    """Normalize broker order payloads to a list of order dicts."""
+    if order_data is None:
+        logger.info("No data available.")
+        return []
+
+    if isinstance(order_data, dict):
+        for key in ("orders", "data", "results", "orderBook", "orderbook"):
+            value = order_data.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                return [value]
+
+        if "securityId" in order_data or "orderId" in order_data:
+            return [order_data]
+
+        for value in order_data.values():
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict) and (
+                "securityId" in value or "orderId" in value
+            ):
+                return [value]
+
+        logger.warning(
+            f"Unexpected Dhan sandbox order payload keys: {list(order_data.keys())}. Treating as empty."
+        )
+        return []
+
+    if isinstance(order_data, list):
+        return order_data
+
+    logger.warning(f"Unexpected Dhan sandbox order payload type: {type(order_data)}")
+    return []
+
+
 def map_order_data(order_data):
     """
     Processes and modifies a list of order dictionaries based on specific conditions.
@@ -17,21 +54,25 @@ def map_order_data(order_data):
     Returns:
     - The modified order_data with updated 'tradingsymbol' and 'product' fields.
     """
-    # Check if 'data' is None
-    if order_data is None:
-        # Handle the case where there is no data
-        # For example, you might want to display a message to the user
-        # or pass an empty list or dictionary to the template.
-        logger.info("No data available.")
-        order_data = {}  # or set it to an empty list if it's supposed to be a list
-    else:
-        order_data = order_data
+    order_data = _normalize_order_collection(order_data)
 
     if order_data:
         for order in order_data:
+            if not isinstance(order, dict):
+                logger.warning(
+                    f"Expected dict order entry but found {type(order)}. Skipping item."
+                )
+                continue
             # Extract the instrument_token and exchange for the current order
-            instrument_token = order["securityId"]
-            exchange = map_exchange(order["exchangeSegment"])
+            instrument_token = order.get("securityId")
+            exchange_segment = order.get("exchangeSegment")
+            if instrument_token is None or exchange_segment is None:
+                logger.warning(
+                    f"Skipping malformed Dhan sandbox order payload missing securityId/exchangeSegment: {order}"
+                )
+                continue
+
+            exchange = map_exchange(exchange_segment)
             order["exchangeSegment"] = exchange
 
             # Use the get_symbol function to fetch the symbol from the database
@@ -76,25 +117,29 @@ def calculate_order_statistics(order_data):
     total_buy_orders = total_sell_orders = 0
     total_completed_orders = total_open_orders = total_rejected_orders = 0
 
+    order_data = _normalize_order_collection(order_data)
+
     if order_data:
         for order in order_data:
+            if not isinstance(order, dict):
+                continue
             # Count buy and sell orders
-            if order["transactionType"] == "BUY":
+            if order.get("transactionType") == "BUY":
                 total_buy_orders += 1
-            elif order["transactionType"] == "SELL":
+            elif order.get("transactionType") == "SELL":
                 total_sell_orders += 1
 
             # Count orders based on their status
-            if order["orderStatus"] == "TRADED":
+            if order.get("orderStatus") == "TRADED":
                 total_completed_orders += 1
                 order["orderStatus"] = "complete"
-            elif order["orderStatus"] == "PENDING":
+            elif order.get("orderStatus") == "PENDING":
                 total_open_orders += 1
                 order["orderStatus"] = "open"
-            elif order["orderStatus"] == "REJECTED":
+            elif order.get("orderStatus") == "REJECTED":
                 total_rejected_orders += 1
                 order["orderStatus"] = "rejected"
-            elif order["orderStatus"] == "CANCELLED":
+            elif order.get("orderStatus") == "CANCELLED":
                 order["orderStatus"] = "cancelled"
 
     # Compile and return the statistics
@@ -108,10 +153,7 @@ def calculate_order_statistics(order_data):
 
 
 def transform_order_data(orders):
-    # Directly handling a dictionary assuming it's the structure we expect
-    if isinstance(orders, dict):
-        # Convert the single dictionary into a list of one dictionary
-        orders = [orders]
+    orders = _normalize_order_collection(orders)
 
     transformed_orders = []
 

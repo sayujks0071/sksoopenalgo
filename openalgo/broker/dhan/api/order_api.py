@@ -20,6 +20,33 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _extract_order_collection(response):
+    """Best-effort normalization for Dhan order/trade/position collections."""
+    if isinstance(response, list):
+        return response
+
+    if not isinstance(response, dict):
+        return response
+
+    for key in ("orders", "data", "results", "orderBook", "orderbook"):
+        value = response.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            return [value]
+
+    if "securityId" in response or "orderId" in response:
+        return [response]
+
+    for value in response.values():
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and ("securityId" in value or "orderId" in value):
+            return [value]
+
+    return response
+
+
 def get_api_response(endpoint, auth, method="GET", payload=""):
     AUTH_TOKEN = auth
     api_key = os.getenv("BROKER_API_KEY")
@@ -75,15 +102,16 @@ def get_api_response(endpoint, auth, method="GET", payload=""):
 
 
 def get_order_book(auth):
-    return get_api_response("/v2/orders", auth)
+    response = get_api_response("/v2/orders", auth)
+    return _extract_order_collection(response)
 
 
 def get_trade_book(auth):
-    return get_api_response("/v2/trades", auth)
+    return _extract_order_collection(get_api_response("/v2/trades", auth))
 
 
 def get_positions(auth):
-    return get_api_response("/v2/positions", auth)
+    return _extract_order_collection(get_api_response("/v2/positions", auth))
 
 
 def get_holdings(auth):

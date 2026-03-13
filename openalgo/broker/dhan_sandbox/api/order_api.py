@@ -20,6 +20,33 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _extract_order_collection(response):
+    """Best-effort normalization for Dhan sandbox collections."""
+    if isinstance(response, list):
+        return response
+
+    if not isinstance(response, dict):
+        return response
+
+    for key in ("orders", "data", "results", "orderBook", "orderbook"):
+        value = response.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            return [value]
+
+    if "securityId" in response or "orderId" in response:
+        return [response]
+
+    for value in response.values():
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and ("securityId" in value or "orderId" in value):
+            return [value]
+
+    return response
+
+
 def get_api_response(endpoint, auth, method="GET", payload=""):
     """
     Helper function to make API requests to the Dhan Sandbox.
@@ -101,7 +128,7 @@ def get_order_book(auth):
         list: List of order dictionaries if successful.
         dict: Error response if failed.
     """
-    return get_api_response("/v2/orders", auth)
+    return _extract_order_collection(get_api_response("/v2/orders", auth))
 
 
 def get_trade_book(auth):
@@ -115,7 +142,7 @@ def get_trade_book(auth):
         list: List of trade dictionaries if successful.
         dict: Error response if failed.
     """
-    return get_api_response("/v2/trades", auth)
+    return _extract_order_collection(get_api_response("/v2/trades", auth))
 
 
 def get_positions(auth):
@@ -129,7 +156,7 @@ def get_positions(auth):
         list: List of position dictionaries if successful.
         dict: Error response if failed.
     """
-    return get_api_response("/v2/positions", auth)
+    return _extract_order_collection(get_api_response("/v2/positions", auth))
 
 
 def get_holdings(auth):

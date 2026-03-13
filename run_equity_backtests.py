@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from backtest_analytics import summarize_trades
+
 TODAY = datetime.today().strftime("%Y-%m-%d")
 
 # ─── INDICATOR HELPERS ────────────────────────────────────────────────────────
@@ -75,32 +77,6 @@ def poc(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
         window = df.iloc[i - lookback : i]
         result.iloc[i] = window.loc[window["volume"].idxmax(), "close"]
     return result
-
-
-# ─── METRICS ─────────────────────────────────────────────────────────────────
-
-def trade_metrics(trades: list, initial_cap: float = 200_000) -> dict:
-    if not trades:
-        return {"pf": 0.0, "wr_pct": 0.0, "dd_pct": 0.0, "trades": 0, "net_pnl": 0.0}
-    pnls   = [t["pnl"] for t in trades]
-    wins   = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p <= 0]
-    gross_win  = sum(wins)
-    gross_loss = abs(sum(losses))
-    pf = round(gross_win / gross_loss, 2) if gross_loss > 0 else 99.0
-    wr = round(100 * len(wins) / len(pnls), 1)
-    # equity curve → max drawdown
-    equity = initial_cap + pd.Series(pnls).cumsum()
-    roll_max = equity.cummax()
-    dd_abs   = (roll_max - equity).max()
-    dd_pct   = round(100 * dd_abs / roll_max.max(), 2)
-    return {
-        "pf":      pf,
-        "wr_pct":  wr,
-        "dd_pct":  dd_pct,
-        "trades":  len(pnls),
-        "net_pnl": round(sum(pnls), 0),
-    }
 
 
 # ─── DATA FETCH ──────────────────────────────────────────────────────────────
@@ -186,7 +162,16 @@ def backtest_supertrend_nifty(days: int = 58) -> dict:
             )
             if exit_now:
                 pnl = (bar["close"] - position["entry"]) * QTY
-                trades.append({"pnl": pnl, "entry": position["entry"], "exit": bar["close"]})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": position["entry"],
+                        "exit": bar["close"],
+                        "qty": QTY,
+                        "side": "BUY",
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position = None
                 trailing_stop = 0.0
         else:
@@ -204,13 +189,34 @@ def backtest_supertrend_nifty(days: int = 58) -> dict:
     if position is not None:
         last = df.iloc[-1]
         pnl  = (last["close"] - position["entry"]) * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "side": "BUY",
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 5m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "NIFTY (^NSEI)"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=4.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 5m",
+            "run_date": TODAY,
+            "symbol": "NIFTY (NIFTYBEES.NS proxy)",
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses NIFTYBEES ETF as a liquid proxy for NIFTY futures.",
+        },
+    )
 
 
 # ─── STRATEGY 2: AI_Hybrid_RELIANCE ─────────────────────────────────────────
@@ -260,8 +266,17 @@ def backtest_ai_hybrid_reliance(days: int = 58) -> dict:
                 tp_hit = (position["target_type"] == "REVERSION") and (close > bar["sma20"])
                 if sl_hit or tp_hit:
                     pnl = (close - entry) * QTY
-                    trades.append({"pnl": pnl, "entry": entry, "exit": close,
-                                   "type": position["target_type"]})
+                    trades.append(
+                        {
+                            "pnl": pnl,
+                            "entry": entry,
+                            "exit": close,
+                            "qty": QTY,
+                            "side": "BUY",
+                            "type": position["target_type"],
+                            "date": str(df.index[i])[:10],
+                        }
+                    )
                     position = None
         else:
             vol_ok  = bar["volume"] > bar["vol_avg"] * 1.2
@@ -283,14 +298,35 @@ def backtest_ai_hybrid_reliance(days: int = 58) -> dict:
     if position is not None:
         last = df.iloc[-1]
         pnl  = (last["close"] - position["entry"]) * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"],
-                       "type": position["target_type"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "side": "BUY",
+                "type": position["target_type"],
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 5m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "RELIANCE.NS"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=3.5,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 5m",
+            "run_date": TODAY,
+            "symbol": "RELIANCE.NS",
+        },
+        quality={
+            "data_mode": "historical_native",
+            "confidence": "high",
+            "note": "Direct NSE cash-equity proxy from yfinance.",
+        },
+    )
 
 
 # ─── STRATEGY 3: MCX_SILVER ──────────────────────────────────────────────────
@@ -349,7 +385,17 @@ def backtest_mcx_silver(days: int = 58) -> dict:
             if exit_now:
                 mul = 1 if side == "BUY" else -1
                 pnl = mul * (close - entry) * LOT_SZ * QTY
-                trades.append({"pnl": pnl, "entry": entry, "exit": close, "side": side})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": entry,
+                        "exit": close,
+                        "qty": QTY,
+                        "multiplier": LOT_SZ,
+                        "side": side,
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position = None
         else:
             strong = bar["adx14"] > ADX_ENTRY
@@ -363,14 +409,35 @@ def backtest_mcx_silver(days: int = 58) -> dict:
         last = df.iloc[-1]
         mul  = 1 if position["side"] == "BUY" else -1
         pnl  = mul * (last["close"] - position["entry"]) * LOT_SZ * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"],
-                       "side": position["side"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "multiplier": LOT_SZ,
+                "side": position["side"],
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 15m"
-    m["run_date"] = TODAY
-    m["symbol"]   = ticker
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=5.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 15m",
+            "run_date": TODAY,
+            "symbol": ticker,
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses SILVER ETF as a signal-quality proxy for MCX silver.",
+        },
+    )
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
@@ -383,7 +450,7 @@ def main():
     results["SuperTrend_NIFTY"] = r1
     if r1:
         print(f"      PF={r1['pf']:.2f}  WR={r1['wr_pct']:.1f}%  "
-              f"DD={r1['dd_pct']:.2f}%  Trades={r1['trades']}  "
+              f"DD={r1['dd_pct']:.2f}%  Score={r1['robustness_score']:.1f}  Trades={r1['trades']}  "
               f"NetPnL=₹{r1['net_pnl']:,.0f}")
 
     print("\n[2/3] AI_Hybrid_RELIANCE (RELIANCE.NS 5m)")
@@ -391,7 +458,7 @@ def main():
     results["AI_Hybrid_RELIANCE"] = r2
     if r2:
         print(f"      PF={r2['pf']:.2f}  WR={r2['wr_pct']:.1f}%  "
-              f"DD={r2['dd_pct']:.2f}%  Trades={r2['trades']}  "
+              f"DD={r2['dd_pct']:.2f}%  Score={r2['robustness_score']:.1f}  Trades={r2['trades']}  "
               f"NetPnL=₹{r2['net_pnl']:,.0f}")
 
     print("\n[3/3] MCX_SILVER (SILVER.NS proxy 15m)")
@@ -399,7 +466,7 @@ def main():
     results["MCX_SILVER"] = r3
     if r3:
         print(f"      PF={r3['pf']:.2f}  WR={r3['wr_pct']:.1f}%  "
-              f"DD={r3['dd_pct']:.2f}%  Trades={r3['trades']}  "
+              f"DD={r3['dd_pct']:.2f}%  Score={r3['robustness_score']:.1f}  Trades={r3['trades']}  "
               f"NetPnL=₹{r3['net_pnl']:,.0f}")
 
     print("\n" + "="*60)
@@ -412,6 +479,7 @@ def main():
                 "dd_pct":  r["dd_pct"],
                 "wr_pct":  r["wr_pct"],
                 "trades":  r["trades"],
+                "robustness_score": r["robustness_score"],
                 "window":  r["window"],
                 "run_date": r["run_date"],
             }

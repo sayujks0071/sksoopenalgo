@@ -160,6 +160,16 @@ class TradingSession:
         self.enforce_daily_lock = _env_bool("OA_ENFORCE_DAILY_LOCK", True)
         lock_default = root_dir / "openalgo" / "logs" / "runner_risk_lock_state.json"
         self.lock_file = Path(os.getenv("OA_RISK_LOCK_FILE", str(lock_default))).expanduser()
+        try:
+            self.broker_snapshot_ttl_sec = max(
+                0.0, float(os.getenv("OA_BROKER_SNAPSHOT_TTL_SEC", "0.75"))
+            )
+        except Exception:
+            self.broker_snapshot_ttl_sec = 0.75
+        self._positionbook_cache = None
+        self._positionbook_cache_ts = 0.0
+        self._orderbook_cache = None
+        self._orderbook_cache_ts = 0.0
 
         # Initialize API Client
         if APIClient:
@@ -192,6 +202,168 @@ class TradingSession:
 
     def _trading_day_key(self):
         return self._ist_now().strftime("%Y-%m-%d")
+
+    def _cache_valid(self, cache_ts):
+        if self.broker_snapshot_ttl_sec <= 0 or cache_ts <= 0:
+            return False
+        return (time_module.time() - cache_ts) < self.broker_snapshot_ttl_sec
+
+    def _get_positionbook(self, force=False):
+        if not self.client:
+            return {}
+        if not force and self._cache_valid(self._positionbook_cache_ts):
+            return self._positionbook_cache or {}
+        pb = self.client.positionbook() or {}
+        self._positionbook_cache = pb
+        self._positionbook_cache_ts = time_module.time()
+        return pb
+
+    def _get_orderbook(self, force=False):
+        if not self.client:
+            return {}
+        if not force and self._cache_valid(self._orderbook_cache_ts):
+            return self._orderbook_cache or {}
+        ob = self.client.orderbook() or {}
+        self._orderbook_cache = ob
+        self._orderbook_cache_ts = time_module.time()
+        return ob
+
+    def _invalidate_broker_snapshots(self):
+        self._positionbook_cache = None
+        self._positionbook_cache_ts = 0.0
+        self._orderbook_cache = None
+        self._orderbook_cache_ts = 0.0
+
+    def _extract_book_rows(self, payload):
+        data = (payload or {}).get("data")
+        if isinstance(data, list):
+            return data
+        return (data or {}).get("net_position") or []
+
+    def _quote_cache_key(self, symbol, exchange):
+        return f"{str(exchange or '').strip().upper()}:{str(symbol or '').strip().upper()}"
+
+    def _normalize_batch_quotes(self, symbols, exchange, payload):
+        if len(symbols) == 1 and isinstance(payload, dict) and "ltp" in payload:
+            return {self._quote_cache_key(symbols[0], exchange): payload}
+
+        if not isinstance(payload, dict):
+            return {}
+
+        normalized = {}
+        lookup = {str(symbol).strip().upper(): symbol for symbol in symbols}
+        for symbol in symbols:
+            cache_key = self._quote_cache_key(symbol, exchange)
+            candidates = (
+                payload.get(symbol),
+                payload.get(str(symbol).upper()),
+                payload.get(cache_key),
+                payload.get(cache_key.upper()),
+            )
+            for quote in candidates:
+                if isinstance(quote, dict):
+                    normalized[cache_key] = quote
+                    break
+
+        if len(normalized) == len(symbols):
+            return normalized
+
+        for raw_key, quote in payload.items():
+            if not isinstance(quote, dict):
+                continue
+            symbol_key = str(raw_key).split(":")[-1].strip().upper()
+            requested = lookup.get(symbol_key)
+            if not requested:
+                continue
+            cache_key = self._quote_cache_key(requested, exchange)
+            normalized.setdefault(cache_key, quote)
+        return normalized
+
+    def get_quotes_batch_with_fallback(self, quote_requests, max_retries=0):
+        """
+        Fetch quotes in batches per exchange, then fill misses using direct Dhan quotes.
+        Returns a dict keyed by ``EXCHANGE:SYMBOL``.
+        """
+        requests = []
+        for item in quote_requests or []:
+            symbol = str((item or {}).get("symbol", "")).strip()
+            exchange = str((item or {}).get("exchange", "")).strip().upper()
+            if symbol and exchange:
+                requests.append({"symbol": symbol, "exchange": exchange})
+        if not requests:
+            return {}
+
+        grouped = {}
+        for item in requests:
+            grouped.setdefault(item["exchange"], [])
+            if item["symbol"] not in grouped[item["exchange"]]:
+                grouped[item["exchange"]].append(item["symbol"])
+
+        quote_map = {}
+        now_ts = time_module.time()
+        used_openalgo = False
+        total_requested = sum(len(symbols) for symbols in grouped.values())
+
+        if (
+            self.client
+            and not self.direct_quotes_only
+            and now_ts >= self._openalgo_quote_skip_until
+        ):
+            for exchange, symbols in grouped.items():
+                try:
+                    if hasattr(self.client, "get_batch_quotes"):
+                        payload = self.client.get_batch_quotes(symbols, exchange=exchange)
+                    else:
+                        payload = self.client.get_quote(
+                            symbols, exchange=exchange, max_retries=max_retries
+                        )
+                except Exception:
+                    payload = None
+                normalized = self._normalize_batch_quotes(symbols, exchange, payload)
+                if normalized:
+                    used_openalgo = True
+                    quote_map.update(normalized)
+
+            if len(quote_map) >= total_requested:
+                self._openalgo_quote_failures = 0
+                self._openalgo_quote_skip_until = 0.0
+            else:
+                self._openalgo_quote_failures += 1
+                fail_threshold = int(os.getenv("OA_OPENALGO_QUOTE_FAIL_THRESHOLD", "3"))
+                cooldown_sec = float(os.getenv("OA_OPENALGO_QUOTE_COOLDOWN_SEC", "120"))
+                if self._openalgo_quote_failures >= max(1, fail_threshold):
+                    self._openalgo_quote_skip_until = now_ts + max(1.0, cooldown_sec)
+                    logger.warning(
+                        f"OpenAlgo quote unstable; using direct Dhan quotes for next {cooldown_sec:.0f}s"
+                    )
+
+        if not self.dhan_data:
+            return quote_map
+
+        for item in requests:
+            cache_key = self._quote_cache_key(item["symbol"], item["exchange"])
+            if cache_key in quote_map:
+                continue
+            try:
+                quote = self.dhan_data.get_quotes(item["symbol"], item["exchange"])
+            except Exception as e:
+                logger.debug(
+                    f"Dhan direct quote failed for {item['symbol']} ({item['exchange']}): {e}"
+                )
+                continue
+            if isinstance(quote, dict) and _env_bool("OA_LOG_DIRECT_DHAN_QUOTES", False):
+                if cache_key not in self._dhan_fallback_logged:
+                    logger.info(
+                        f"📡 Using direct Dhan quote fallback for {item['symbol']} ({item['exchange']})"
+                    )
+                    self._dhan_fallback_logged.add(cache_key)
+            if isinstance(quote, dict):
+                quote_map[cache_key] = quote
+
+        if used_openalgo and quote_map:
+            self._openalgo_quote_failures = 0
+            self._openalgo_quote_skip_until = 0.0
+        return quote_map
 
     def _read_lock_state(self):
         if not self.lock_file.exists():
@@ -429,7 +601,7 @@ class TradingSession:
         if not self.client or self.segment != "FNO_OPTIONS":
             return None
         try:
-            ob = self.client.orderbook()
+            ob = self._get_orderbook()
             orders = ((ob or {}).get("data") or {}).get("orders") or []
             # Newest first
             for row in orders:
@@ -442,9 +614,7 @@ class TradingSession:
                     return sym
             # Fallback: if no completed order found, use an existing open position
             # for the same underlying to avoid idle loops under FNO_ACCEPTED_ONLY.
-            pb = self.client.positionbook()
-            pdata = (pb or {}).get("data")
-            positions = pdata if isinstance(pdata, list) else ((pdata or {}).get("net_position") or [])
+            positions = self._extract_book_rows(self._get_positionbook())
             for row in positions:
                 if str(row.get("exchange", "")).upper() != "NFO":
                     continue
@@ -561,9 +731,7 @@ class TradingSession:
         if not self.client:
             return False
         try:
-            pb = self.client.positionbook() or {}
-            pdata = pb.get("data")
-            rows = pdata if isinstance(pdata, list) else ((pdata or {}).get("net_position") or [])
+            rows = self._extract_book_rows(self._get_positionbook())
             for row in rows:
                 sym = str(row.get("symbol", "")).strip().upper()
                 if sym != str(symbol).strip().upper():
@@ -580,9 +748,7 @@ class TradingSession:
         if not self.client:
             return 0.0
         try:
-            pb = self.client.positionbook() or {}
-            pdata = pb.get("data")
-            rows = pdata if isinstance(pdata, list) else ((pdata or {}).get("net_position") or [])
+            rows = self._extract_book_rows(self._get_positionbook())
             for row in rows:
                 sym = str(row.get("symbol", "")).strip().upper()
                 if sym != str(symbol).strip().upper():
@@ -874,9 +1040,7 @@ class TradingSession:
         if not self.client:
             return
         try:
-            pb = self.client.positionbook() or {}
-            pdata = pb.get("data")
-            rows = pdata if isinstance(pdata, list) else ((pdata or {}).get("net_position") or [])
+            rows = self._extract_book_rows(self._get_positionbook())
             for row in rows:
                 qty = int(float(row.get("quantity", 0) or 0))
                 if qty == 0:
@@ -924,6 +1088,7 @@ class TradingSession:
                                 quantity=chunk,
                                 position_size=0,
                             )
+                        self._invalidate_broker_snapshots()
                         logger.warning(f"Square-off response for {symbol}: {resp}")
                     except Exception as e:
                         logger.error(f"Square-off failed for {symbol} (qty={chunk}): {e}")
@@ -1030,6 +1195,7 @@ class TradingSession:
                     if "no action needed" in msg or "positions already matched" in msg:
                         logger.info(f"No new order executed for {symbol}: {response.get('message')}")
                         return None
+                    self._invalidate_broker_snapshots()
                     trade["order_id"] = response.get("order_id") or response.get("orderid") or "simulated"
                 else:
                     self.maybe_lock_on_broker_auth_error(response)
@@ -1160,9 +1326,18 @@ class TradingSession:
             if raw_mtm is not None:
                 return raw_mtm
 
-            pb = self.client.positionbook() or {}
-            pdata = pb.get("data")
-            rows = pdata if isinstance(pdata, list) else ((pdata or {}).get("net_position") or [])
+            rows = self._extract_book_rows(self._get_positionbook())
+            quote_requests = []
+            for row in rows:
+                qty = float(row.get("quantity", 0) or 0)
+                if qty == 0:
+                    continue
+                symbol = str(row.get("symbol", "")).strip()
+                if not symbol:
+                    continue
+                exchange = str(row.get("exchange", "")).strip().upper() or self._quote_exchange()
+                quote_requests.append({"symbol": symbol, "exchange": exchange})
+            batch_quotes = self.get_quotes_batch_with_fallback(quote_requests, max_retries=0)
 
             total_pnl = 0.0
             quoted = 0
@@ -1178,17 +1353,17 @@ class TradingSession:
                 avg = float(row.get("average_price", 0) or 0)
 
                 ltp = None
-                q = self.get_quote_with_fallback(symbol, exchange=exchange, max_retries=0)
+                q = batch_quotes.get(self._quote_cache_key(symbol, exchange))
                 if q and "ltp" in q:
                     try:
                         ltp = float(q.get("ltp"))
                     except Exception:
                         ltp = None
                 if ltp is not None and ltp > 0:
-                    self.last_symbol_prices[symbol] = ltp
+                    self.last_symbol_prices[self._quote_cache_key(symbol, exchange)] = ltp
                     quoted += 1
                 else:
-                    ltp = self.last_symbol_prices.get(symbol)
+                    ltp = self.last_symbol_prices.get(self._quote_cache_key(symbol, exchange))
                     if ltp is not None:
                         stale += 1
                 if ltp is None:
@@ -1393,17 +1568,30 @@ def run_live_strategy(segment="EQUITY", iterations=None):
                 logger.debug(f"Regime router decision failed: {e}")
 
         current_prices = {}
+        resolved_map = {}
+        quote_requests = []
         for instrument in active_instruments:
             resolved = session.resolve_tradable_symbol(instrument)
+            if not resolved:
+                continue
+            resolved_map[instrument] = resolved
+            quote_requests.append(
+                {
+                    "symbol": resolved["symbol"],
+                    "exchange": resolved["quote_exchange"],
+                }
+            )
+        batch_quotes = session.get_quotes_batch_with_fallback(quote_requests, max_retries=0)
+
+        for instrument in active_instruments:
+            resolved = resolved_map.get(instrument)
             if not resolved:
                 continue
             tradingsymbol = resolved["symbol"]
             quote_exchange = resolved["quote_exchange"]
             order_exchange = resolved["order_exchange"]
 
-            quote = session.get_quote_with_fallback(
-                tradingsymbol, exchange=quote_exchange, max_retries=0
-            )
+            quote = batch_quotes.get(session._quote_cache_key(tradingsymbol, quote_exchange))
             if not quote or "ltp" not in quote:
                 logger.warning(f"⚠️ Could not fetch quote for {instrument} ({tradingsymbol})")
                 # Aggressive failover mode: attempt controlled startup entries

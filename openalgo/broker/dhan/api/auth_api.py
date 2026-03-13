@@ -19,12 +19,18 @@ def generate_consent(dhan_client_id):
         BROKER_API_KEY = os.getenv("BROKER_API_KEY")
         BROKER_API_SECRET = os.getenv("BROKER_API_SECRET")
 
-        # Extract client_id from API key if format is client_id:::api_key
-        if ":::" in BROKER_API_KEY:
-            extracted_client_id, BROKER_API_KEY = BROKER_API_KEY.split(":::")
+        # Extract client_id from BROKER_API_KEY if format is client_id:::api_key
+        if BROKER_API_KEY and ":::" in BROKER_API_KEY:
+            extracted_client_id, extracted_key = BROKER_API_KEY.split(":::", 1)
             # Use extracted client_id if dhan_client_id not provided
             if not dhan_client_id:
                 dhan_client_id = extracted_client_id
+            # NOTE: extracted_key is the SELF-token JWT — do NOT use it as app_id for OAuth
+
+        # Use DHAN_API_KEY env var (short key e.g. "e176eb2e") as the OAuth app_id.
+        # BROKER_API_KEY after split is a JWT (SELF token) which Dhan rejects for OAuth.
+        app_id = os.getenv("DHAN_API_KEY") or BROKER_API_KEY
+        app_secret = os.getenv("DHAN_API_SECRET") or BROKER_API_SECRET
 
         if not dhan_client_id:
             logger.error("Dhan Client ID is required for generating consent")
@@ -32,15 +38,15 @@ def generate_consent(dhan_client_id):
 
         client = get_httpx_client()
 
-        headers = {"app_id": BROKER_API_KEY, "app_secret": BROKER_API_SECRET}
+        headers = {"app_id": app_id, "app_secret": app_secret}
 
         # Build URL with client_id parameter - REQUIRED by Dhan API
         url = f"{AUTH_BASE_URL}/app/generate-consent"
 
         logger.info(f"Generating consent for Dhan Client ID: {dhan_client_id}")
-        logger.info(f"Using API Key: {BROKER_API_KEY[:8] if BROKER_API_KEY else 'None'}...")
+        logger.info(f"Using API Key: {app_id[:8] if app_id else 'None'}...")
         logger.info(
-            f"Using API Secret: {BROKER_API_SECRET[:8] if BROKER_API_SECRET else 'None'}..."
+            f"Using API Secret: {app_secret[:8] if app_secret else 'None'}..."
         )
 
         # Make the POST request with the client_id as a query parameter
@@ -85,15 +91,15 @@ def consume_consent(token_id):
         BROKER_API_KEY = os.getenv("BROKER_API_KEY")
         BROKER_API_SECRET = os.getenv("BROKER_API_SECRET")
 
-        # Extract client_id from API key if format is client_id:::api_key
-        if ":::" in BROKER_API_KEY:
-            extracted_client_id, BROKER_API_KEY = BROKER_API_KEY.split(":::")
+        # Use DHAN_API_KEY (short key) for OAuth — BROKER_API_KEY split gives JWT (SELF token)
+        app_id = os.getenv("DHAN_API_KEY") or BROKER_API_KEY
+        app_secret = os.getenv("DHAN_API_SECRET") or BROKER_API_SECRET
 
         client = get_httpx_client()
 
         headers = {
-            "app_id": BROKER_API_KEY,
-            "app_secret": BROKER_API_SECRET,
+            "app_id": app_id,
+            "app_secret": app_secret,
             "Content-Type": "application/json",
         }
 

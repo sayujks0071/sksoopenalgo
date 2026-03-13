@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from backtest_analytics import summarize_trades
+
 TODAY = datetime.today().strftime("%Y-%m-%d")
 
 
@@ -76,31 +78,6 @@ def poc_series(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
         window = df.iloc[i - lookback : i]
         result.iloc[i] = window.loc[window["volume"].idxmax(), "close"]
     return result
-
-
-# ─── METRICS ─────────────────────────────────────────────────────────────────
-
-def trade_metrics(trades: list, initial_cap: float = 200_000) -> dict:
-    if not trades:
-        return {"pf": 0.0, "wr_pct": 0.0, "dd_pct": 0.0, "trades": 0, "net_pnl": 0.0}
-    pnls       = [t["pnl"] for t in trades]
-    wins       = [p for p in pnls if p > 0]
-    losses     = [p for p in pnls if p <= 0]
-    gross_win  = sum(wins)
-    gross_loss = abs(sum(losses))
-    pf  = round(gross_win / gross_loss, 2) if gross_loss > 0 else 99.0
-    wr  = round(100 * len(wins) / len(pnls), 1)
-    equity   = initial_cap + pd.Series(pnls).cumsum()
-    roll_max = equity.cummax()
-    dd_abs   = (roll_max - equity).max()
-    dd_pct   = round(100 * dd_abs / roll_max.max(), 2)
-    return {
-        "pf":      pf,
-        "wr_pct":  wr,
-        "dd_pct":  dd_pct,
-        "trades":  len(pnls),
-        "net_pnl": round(sum(pnls), 0),
-    }
 
 
 # ─── DATA FETCH ──────────────────────────────────────────────────────────────
@@ -188,7 +165,16 @@ def backtest_supertrend_nifty_v2(days: int = 58) -> dict:
             )
             if exit_now:
                 pnl = (bar["close"] - position["entry"]) * QTY
-                trades.append({"pnl": pnl, "entry": position["entry"], "exit": bar["close"]})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": position["entry"],
+                        "exit": bar["close"],
+                        "qty": QTY,
+                        "side": "BUY",
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position      = None
                 trailing_stop = 0.0
         else:
@@ -208,13 +194,34 @@ def backtest_supertrend_nifty_v2(days: int = 58) -> dict:
     if position is not None:
         last = df.iloc[-1]
         pnl  = (last["close"] - position["entry"]) * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "side": "BUY",
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 5m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "NIFTY (NIFTYBEES.NS)"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=4.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 5m",
+            "run_date": TODAY,
+            "symbol": "NIFTY (NIFTYBEES.NS proxy)",
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses NIFTYBEES ETF as the nearest liquid proxy for NIFTY futures.",
+        },
+    )
 
 
 # ─── STRATEGY 2: MCX_GOLD ─────────────────────────────────────────────────────
@@ -269,7 +276,17 @@ def backtest_mcx_gold(days: int = 58) -> dict:
             if exit_now:
                 mul = 1 if side == "BUY" else -1
                 pnl = mul * (close - entry) * LOT_SZ * QTY
-                trades.append({"pnl": pnl, "entry": entry, "exit": close, "side": side})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": entry,
+                        "exit": close,
+                        "qty": QTY,
+                        "multiplier": LOT_SZ,
+                        "side": side,
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position = None
         else:
             adx_ok  = not pd.isna(bar["adx14"]) and bar["adx14"] > 20
@@ -288,14 +305,35 @@ def backtest_mcx_gold(days: int = 58) -> dict:
         last = df.iloc[-1]
         mul  = 1 if position["side"] == "BUY" else -1
         pnl  = mul * (last["close"] - position["entry"]) * LOT_SZ * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"],
-                       "side": position["side"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "multiplier": LOT_SZ,
+                "side": position["side"],
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 15m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "GOLDBEES.NS"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=5.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 15m",
+            "run_date": TODAY,
+            "symbol": "GOLDBEES.NS",
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses GOLDBEES ETF as a liquid proxy for MCX Gold Mini.",
+        },
+    )
 
 
 # ─── STRATEGY 3: MCX_CRUDEOIL ─────────────────────────────────────────────────
@@ -355,7 +393,17 @@ def backtest_mcx_crudeoil(days: int = 58) -> dict:
             if exit_now:
                 mul = 1 if side == "BUY" else -1
                 pnl = mul * (close - entry) * LOT_VAL * QTY
-                trades.append({"pnl": pnl, "entry": entry, "exit": close, "side": side})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": entry,
+                        "exit": close,
+                        "qty": QTY,
+                        "multiplier": LOT_VAL,
+                        "side": side,
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position = None
         else:
             strong   = bar["adx14"] > ADX_ENTRY
@@ -371,14 +419,35 @@ def backtest_mcx_crudeoil(days: int = 58) -> dict:
         last = df.iloc[-1]
         mul  = 1 if position["side"] == "BUY" else -1
         pnl  = mul * (last["close"] - position["entry"]) * LOT_VAL * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"],
-                       "side": position["side"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "multiplier": LOT_VAL,
+                "side": position["side"],
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 15m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "BZ=F (Brent proxy)"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=6.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.75,
+        metadata={
+            "window": f"{days}d 15m",
+            "run_date": TODAY,
+            "symbol": "BZ=F (Brent proxy)",
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses Brent futures as a proxy; not a venue-native MCX replay.",
+        },
+    )
 
 
 # ─── BONUS: SuperTrend_BANKNIFTY ─────────────────────────────────────────────
@@ -430,7 +499,16 @@ def backtest_banknifty_vwap(days: int = 58) -> dict:
                 trailing_stop = new_stop
             if bar["close"] < trailing_stop or bar["close"] < bar["vwap"]:
                 pnl = (bar["close"] - position["entry"]) * QTY
-                trades.append({"pnl": pnl, "entry": position["entry"], "exit": bar["close"]})
+                trades.append(
+                    {
+                        "pnl": pnl,
+                        "entry": position["entry"],
+                        "exit": bar["close"],
+                        "qty": QTY,
+                        "side": "BUY",
+                        "date": str(df.index[i])[:10],
+                    }
+                )
                 position      = None
                 trailing_stop = 0.0
         else:
@@ -447,13 +525,34 @@ def backtest_banknifty_vwap(days: int = 58) -> dict:
     if position is not None:
         last = df.iloc[-1]
         pnl  = (last["close"] - position["entry"]) * QTY
-        trades.append({"pnl": pnl, "entry": position["entry"], "exit": last["close"]})
+        trades.append(
+            {
+                "pnl": pnl,
+                "entry": position["entry"],
+                "exit": last["close"],
+                "qty": QTY,
+                "side": "BUY",
+                "date": str(df.index[-1])[:10],
+            }
+        )
 
-    m = trade_metrics(trades, CAPITAL)
-    m["window"]   = f"{days}d 5m"
-    m["run_date"] = TODAY
-    m["symbol"]   = "BANKNIFTY (BANKBEES.NS)"
-    return m
+    return summarize_trades(
+        trades,
+        initial_capital=CAPITAL,
+        slippage_bps_per_side=4.0,
+        brokerage_per_order=20.0,
+        tax_bps_per_side=0.5,
+        metadata={
+            "window": f"{days}d 5m",
+            "run_date": TODAY,
+            "symbol": "BANKNIFTY (BANKBEES.NS proxy)",
+        },
+        quality={
+            "data_mode": "historical_proxy",
+            "confidence": "medium",
+            "note": "Uses BANKBEES ETF as a liquid proxy for BankNIFTY futures.",
+        },
+    )
 
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
@@ -470,7 +569,7 @@ def main():
     results["SuperTrend_NIFTY_v2"] = r1
     if r1 and r1.get("trades", 0) > 0:
         print(f"      PF={r1['pf']:.2f}  WR={r1['wr_pct']:.1f}%  "
-              f"DD={r1['dd_pct']:.2f}%  Trades={r1['trades']}  NetPnL=₹{r1['net_pnl']:,.0f}")
+              f"DD={r1['dd_pct']:.2f}%  Score={r1['robustness_score']:.1f}  Trades={r1['trades']}  NetPnL=₹{r1['net_pnl']:,.0f}")
     else:
         print("      No trades generated")
 
@@ -479,7 +578,7 @@ def main():
     results["BankNIFTY_VWAP_v2"] = r2
     if r2 and r2.get("trades", 0) > 0:
         print(f"      PF={r2['pf']:.2f}  WR={r2['wr_pct']:.1f}%  "
-              f"DD={r2['dd_pct']:.2f}%  Trades={r2['trades']}  NetPnL=₹{r2['net_pnl']:,.0f}")
+              f"DD={r2['dd_pct']:.2f}%  Score={r2['robustness_score']:.1f}  Trades={r2['trades']}  NetPnL=₹{r2['net_pnl']:,.0f}")
     else:
         print("      No trades generated")
 
@@ -488,7 +587,7 @@ def main():
     results["MCX_GOLD"] = r3
     if r3 and r3.get("trades", 0) > 0:
         print(f"      PF={r3['pf']:.2f}  WR={r3['wr_pct']:.1f}%  "
-              f"DD={r3['dd_pct']:.2f}%  Trades={r3['trades']}  NetPnL=₹{r3['net_pnl']:,.0f}")
+              f"DD={r3['dd_pct']:.2f}%  Score={r3['robustness_score']:.1f}  Trades={r3['trades']}  NetPnL=₹{r3['net_pnl']:,.0f}")
     else:
         print("      No trades generated")
 
@@ -497,7 +596,7 @@ def main():
     results["MCX_CRUDEOIL"] = r4
     if r4 and r4.get("trades", 0) > 0:
         print(f"      PF={r4['pf']:.2f}  WR={r4['wr_pct']:.1f}%  "
-              f"DD={r4['dd_pct']:.2f}%  Trades={r4['trades']}  NetPnL=₹{r4['net_pnl']:,.0f}")
+              f"DD={r4['dd_pct']:.2f}%  Score={r4['robustness_score']:.1f}  Trades={r4['trades']}  NetPnL=₹{r4['net_pnl']:,.0f}")
     else:
         print("      No trades generated")
 
@@ -510,7 +609,7 @@ def main():
             status = "✅ DEPLOY" if r["pf"] >= 1.5 and r["dd_pct"] < 10 else (
                      "⚠️  REVIEW" if r["pf"] >= 1.0 else "❌ PAUSE")
             print(f"  {name:30s} PF={r['pf']:.2f}  WR={r['wr_pct']:.1f}%  "
-                  f"DD={r['dd_pct']:.2f}%  Trades={r['trades']}  {status}")
+                  f"DD={r['dd_pct']:.2f}%  Score={r['robustness_score']:.1f}  Trades={r['trades']}  {status}")
         else:
             print(f"  {name:30s} — No trades")
 
@@ -524,7 +623,10 @@ def main():
     print("\n--- active_strategies.json entries (copy-paste) ---")
     for name, r in results.items():
         if r and r.get("trades", 0) > 0:
-            entry = {k: r[k] for k in ("pf","dd_pct","wr_pct","trades","window","run_date")}
+            entry = {
+                k: r[k]
+                for k in ("pf", "dd_pct", "wr_pct", "trades", "robustness_score", "window", "run_date")
+            }
             print(f'\n"{name}":')
             print(json.dumps(entry, indent=4))
 

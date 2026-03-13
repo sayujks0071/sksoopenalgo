@@ -123,6 +123,88 @@ PARAMETER_SPACES = {
     }
 }
 
+# ─────────────────────────────────────────────────────────────
+# Live strategy parameter spaces (as of 2026-03-09)
+# ─────────────────────────────────────────────────────────────
+
+# MCX ATR Trend — parameters map to argparse flags in mcx_atr_trend_strategy.py
+# All env-var names are the long-flag names uppercased with hyphens → underscores
+PARAMETER_SPACES['mcx_atr_trend'] = {
+    'indicator_periods': {
+        'EMA_FAST':  [7, 9, 11, 13],
+        'EMA_SLOW':  [17, 21, 25, 30],
+        'ADX_PERIOD': [12, 14, 16],      # ADX computed internally; threshold tunable
+    },
+    'entry_thresholds': {
+        'RSI_BUY':       [50.0, 55.0, 60.0],
+        'RSI_SELL':      [40.0, 45.0, 50.0],
+        'ADX_THRESHOLD': [20.0, 25.0, 30.0, 35.0],
+    },
+    'risk_management': {
+        'ATR_SL':        [1.0, 1.5, 2.0, 2.5],
+        'ATR_TP':        [2.0, 2.5, 3.0, 3.5, 4.0],
+        'TRAIL_ATR':     [0.0, 0.5, 1.0, 1.5],    # 0 = disabled
+        'TRAIL_ATR_SHORT': [0.0, 0.5, 1.0],
+    },
+    'trade_management': {
+        'COOLDOWN_MINUTES':    [3, 5, 8, 10],
+        'MAX_TRADES_PER_DAY':  [4, 6, 8],
+    },
+}
+
+# ORB Equity — parameters map to env-vars in orb_equity_volume.py
+PARAMETER_SPACES['orb_equity'] = {
+    'orb_params': {
+        'ORB_MINUTES':    [15, 20, 30, 45],
+        'ORB_BUFFER_PCT': [0.05, 0.10, 0.15, 0.20],
+    },
+    'risk_management': {
+        'SL_PCT':   [0.3, 0.4, 0.5, 0.6, 0.7],
+        'TP_PCT':   [1.0, 1.2, 1.5, 1.8, 2.0, 2.5],
+        'MAX_HOLD_MIN': [60, 75, 90, 105, 120],
+    },
+    'volume_filter': {
+        'VOLUME_MULTIPLIER': [1.3, 1.5, 1.7, 2.0, 2.5],
+        'VOLUME_LOOKBACK':   [10, 15, 20, 25],
+    },
+    'gap_filter': {
+        'GAP_THRESHOLD_PCT': [0.10, 0.15, 0.20, 0.25],
+    },
+}
+
+# VWAP RSI Equity — parameters map to env-vars in vwap_rsi_equity.py
+PARAMETER_SPACES['vwap_equity'] = {
+    'indicator_periods': {
+        'VWAP_STD_MULT':   [1.0, 1.25, 1.5, 1.75, 2.0],
+        'VWAP_STD_WINDOW': [10, 15, 20, 25, 30],
+        'RSI_PERIOD':      [10, 12, 14, 16, 20],
+    },
+    'entry_thresholds': {
+        'RSI_OVERSOLD':    [25.0, 28.0, 30.0, 32.0, 35.0],
+        'RSI_OVERBOUGHT':  [65.0, 68.0, 70.0, 72.0, 75.0],
+    },
+    'risk_management': {
+        'SL_PCT':      [0.25, 0.30, 0.35, 0.40, 0.50],
+        'MAX_HOLD_MIN': [45, 60, 75, 90],
+    },
+}
+
+# EMA Supertrend Equity — parameters map to env-vars in ema_supertrend_equity.py
+PARAMETER_SPACES['ema_equity'] = {
+    'indicator_periods': {
+        'FAST_EMA':         [3, 5, 7, 9],
+        'SLOW_EMA':         [10, 13, 17, 21],
+        'SUPERTREND_PERIOD': [7, 10, 14],
+        'SUPERTREND_MULT':  [1.5, 2.0, 2.5, 3.0, 3.5],
+        'ATR_PERIOD':       [10, 12, 14, 16],
+    },
+    'risk_management': {
+        'ATR_SL_MULT': [1.0, 1.25, 1.5, 1.75, 2.0],
+        'ATR_TP_MULT': [2.0, 2.5, 3.0, 3.5, 4.0],
+        'ADX_MIN':     [0, 15.0, 20.0, 25.0],
+    },
+}
+
 # Key parameters for grid search (reduced search space)
 GRID_SEARCH_PARAMS = {
     'natural_gas_clawdbot': {
@@ -140,7 +222,51 @@ GRID_SEARCH_PARAMS = {
         'ATR_TP_MULTIPLIER': [2.5, 3.0, 3.5, 4.0],
         'TIMEFRAME_15m': [0.50, 0.60, 0.70],
         'ADX_ADAPTIVE_FACTOR': [0.30, 0.35, 0.40]
-    }
+    },
+    # ── Live strategy grid params (high-impact subset for ≤120 evaluations) ──
+    'mcx_atr_trend': {
+        # Trend filter — most sensitivity here
+        'ADX_THRESHOLD': [20.0, 25.0, 30.0],
+        # Risk/reward ratio drives PF most
+        'ATR_SL': [1.0, 1.5, 2.0],
+        'ATR_TP': [2.5, 3.0, 3.5, 4.0],
+        # EMA crossover speed
+        'EMA_FAST': [7, 9, 11],
+        'EMA_SLOW': [19, 21, 25],
+    },
+    'orb_equity': {
+        # ORB window width has huge effect on signal quality
+        'ORB_MINUTES': [15, 20, 30],
+        'ORB_BUFFER_PCT': [0.05, 0.10, 0.15],
+        # Risk/reward
+        'SL_PCT': [0.3, 0.5, 0.7],
+        'TP_PCT': [1.0, 1.5, 2.0],
+        # Volume filter quality
+        'VOLUME_MULTIPLIER': [1.5, 1.7, 2.0],
+    },
+    'vwap_equity': {
+        # VWAP band width drives entry selectivity
+        'VWAP_STD_MULT': [1.0, 1.5, 2.0],
+        # RSI filter tightness
+        'RSI_OVERSOLD': [25.0, 30.0, 35.0],
+        'RSI_OVERBOUGHT': [65.0, 70.0, 75.0],
+        # Stop loss
+        'SL_PCT': [0.25, 0.35, 0.50],
+        # Max hold (mean-reversion: shorter = tighter)
+        'MAX_HOLD_MIN': [45, 60, 90],
+    },
+    'ema_equity': {
+        # EMA crossover speeds
+        'FAST_EMA': [3, 5, 7],
+        'SLOW_EMA': [10, 13, 17],
+        # SuperTrend multiplier (lower = more signals, higher = more selective)
+        'SUPERTREND_MULT': [1.5, 2.0, 2.5, 3.0],
+        # Risk/reward via ATR
+        'ATR_SL_MULT': [1.0, 1.5, 2.0],
+        'ATR_TP_MULT': [2.5, 3.0, 3.5],
+        # ADX filter (0 = disabled)
+        'ADX_MIN': [0, 20.0, 25.0],
+    },
 }
 
 def get_parameter_ranges(strategy_name: str) -> dict[str, dict[str, list]]:
@@ -200,6 +326,52 @@ def get_continuous_ranges(strategy_name: str) -> dict[str, tuple[float, float]]:
             'TRENDING_MACD': (0.25, 0.35),
             'TRENDING_ADX': (0.18, 0.22),
             'TRENDING_RSI': (0.12, 0.18)
-        }
+        },
+        # ── Live strategies (Bayesian uses continuous ranges) ─────────────
+        # MCX ATR Trend — argparse flags; int params cast to int at inject time
+        'mcx_atr_trend': {
+            'EMA_FAST':       (7.0, 13.0),    # → int
+            'EMA_SLOW':       (17.0, 30.0),   # → int; constrained EMA_SLOW > EMA_FAST+6
+            'RSI_BUY':        (50.0, 65.0),
+            'RSI_SELL':       (35.0, 50.0),
+            'ADX_THRESHOLD':  (18.0, 35.0),
+            'ATR_SL':         (0.8, 2.5),
+            'ATR_TP':         (2.0, 4.5),     # constrained ATR_TP > ATR_SL*1.5
+            'TRAIL_ATR':      (0.0, 2.0),      # 0 = disabled
+            'COOLDOWN_MINUTES': (3.0, 12.0),  # → int
+            'MAX_TRADES_PER_DAY': (4.0, 8.0), # → int
+        },
+        # ORB Equity — env-var names
+        'orb_equity': {
+            'ORB_MINUTES':      (10.0, 45.0),  # → int
+            'ORB_BUFFER_PCT':   (0.05, 0.25),
+            'SL_PCT':           (0.25, 0.80),
+            'TP_PCT':           (0.80, 2.50),  # constrained TP_PCT > SL_PCT*2
+            'MAX_HOLD_MIN':     (45.0, 120.0), # → int
+            'VOLUME_MULTIPLIER': (1.2, 2.8),
+            'VOLUME_LOOKBACK':  (10.0, 25.0),  # → int
+            'GAP_THRESHOLD_PCT': (0.08, 0.25),
+        },
+        # VWAP RSI Equity — env-var names
+        'vwap_equity': {
+            'VWAP_STD_MULT':   (0.8, 2.5),
+            'VWAP_STD_WINDOW': (10.0, 30.0),  # → int
+            'RSI_PERIOD':      (10.0, 20.0),  # → int
+            'RSI_OVERSOLD':    (20.0, 38.0),
+            'RSI_OVERBOUGHT':  (62.0, 80.0),  # constrained > 100-RSI_OVERSOLD
+            'SL_PCT':          (0.20, 0.60),
+            'MAX_HOLD_MIN':    (30.0, 90.0),  # → int
+        },
+        # EMA SuperTrend Equity — env-var names
+        'ema_equity': {
+            'FAST_EMA':         (3.0, 9.0),    # → int
+            'SLOW_EMA':         (9.0, 25.0),   # → int; constrained > FAST_EMA+4
+            'SUPERTREND_PERIOD': (7.0, 16.0),  # → int
+            'SUPERTREND_MULT':  (1.2, 4.0),
+            'ATR_PERIOD':       (10.0, 18.0),  # → int
+            'ATR_SL_MULT':      (0.8, 2.2),
+            'ATR_TP_MULT':      (1.8, 4.5),    # constrained > ATR_SL_MULT*1.5
+            'ADX_MIN':          (0.0, 30.0),   # 0-10 effectively = disabled
+        },
     }
     return spaces.get(strategy_name, {})

@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import sys
@@ -146,8 +147,26 @@ class BaseStrategy:
         else:
             self.client = APIClient(api_key=self.api_key, host=self.host)
 
-        self.pm = PositionManager(self.symbol) if (PositionManager and self.symbol) else None
+        # Only create default PositionManager if setup() didn't already create one.
+        # setup() may build a subclass-specific pm (e.g. MCX with exchange=MCX, product=NRML).
+        # Overwriting it here would silently reset _exchange back to the "NSE" default.
+        if not hasattr(self, "pm") or self.pm is None:
+            self.pm = PositionManager(self.symbol) if (PositionManager and self.symbol) else None
         self.smart_order = SmartOrder(self.client) if SmartOrder else None
+
+        # ── Premarket dynamic position sizing ─────────────────────────────────
+        # Applies quantity multiplier from premarket_analyzer.py signal file.
+        # Falls back to 1.0× (no change) if file is absent or stale.
+        # Runs after setup() + setup_logging() so self.logger and self.quantity exist.
+        premarket_mult = self._load_premarket_multiplier()
+        if premarket_mult != 1.0:
+            raw_qty = self.quantity
+            max_lots = getattr(self, "max_lots", None) or (raw_qty * 10)
+            self.quantity = min(max(1, round(raw_qty * premarket_mult)), max_lots)
+            self.logger.info(
+                "Quantity adjusted: %d → %d (%.1f× premarket multiplier, max_lots=%s)",
+                raw_qty, self.quantity, premarket_mult, max_lots,
+            )
 
     def setup(self):
         """
@@ -652,6 +671,61 @@ class BaseStrategy:
 
         return self.quantity
 
+    def _load_premarket_multiplier(self) -> float:
+        """
+        Read today's premarket_signal.json and return the quantity multiplier for
+        this strategy.  Falls back to 1.0 (no change) on any error or stale file.
+
+        The signal file is written by scripts/premarket_analyzer.py at 08:45 IST.
+        Expected location: strategies/state/premarket_signal.json
+
+        Multiplier tiers (set by premarket_analyzer):
+          3.0× — STRONG_TREND (score ≥ 75)
+          2.0× — MODERATE     (score ≥ 55)
+          1.0× — NEUTRAL      (score ≥ 40)
+          0.5× — WEAK         (score  < 40)
+          Hard cap at 1.0× when VIX > 25 (PANIC regime).
+        """
+        from datetime import date as _date
+        signal_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "state", "premarket_signal.json",
+        )
+        try:
+            with open(signal_path) as f:
+                data = json.load(f)
+
+            # Staleness guard — reject if file is from a previous day
+            if data.get("date") != _date.today().isoformat():
+                self.logger.warning(
+                    "Premarket signal is stale (date=%s, today=%s) — using 1.0×",
+                    data.get("date"), _date.today().isoformat(),
+                )
+                return 1.0
+
+            # Look up by strategy_name, fall back to _default
+            strategy_key = getattr(self, "strategy_name", self.name)
+            multipliers  = data.get("multipliers", {})
+            entry        = multipliers.get(strategy_key) or multipliers.get("_default", {})
+
+            mult   = float(entry.get("multiplier", 1.0))
+            label  = entry.get("label", "NEUTRAL")
+            reason = entry.get("reason", "")
+            self.logger.info(
+                "Premarket multiplier: %.1f× (%s) — %s", mult, label, reason
+            )
+            return mult
+
+        except FileNotFoundError:
+            self.logger.info(
+                "No premarket signal file — using 1.0× "
+                "(run scripts/premarket_analyzer.py at 08:45)"
+            )
+            return 1.0
+        except Exception as e:
+            self.logger.warning("Premarket signal load error: %s — using 1.0×", e)
+            return 1.0
+
     def calculate_adx(self, df, period=14):
         """Calculate ADX (Scalar)."""
         result = calculate_adx(df, period)
@@ -715,6 +789,8 @@ class BaseStrategy:
 
         # Logic / Filters
         parser.add_argument("--ignore_time", action="store_true", help="Ignore market hours")
+        parser.add_argument("--dry-run", action="store_true", default=False,
+                            help="Dry-run mode: log orders without placing them (no real broker calls)")
         parser.add_argument("--sector", type=str, help="Sector Benchmark (e.g., NIFTY 50)")
         parser.add_argument("--type", type=str, default="EQUITY", help="Instrument Type (EQUITY, FUT, OPT)")
         parser.add_argument("--underlying", type=str, help="Underlying Asset (e.g. NIFTY)")

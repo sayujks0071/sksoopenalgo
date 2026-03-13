@@ -17,12 +17,14 @@ logger = get_logger(__name__)
 def test_auth_token(auth_token):
     """Test if the auth token is valid by making a simple API call to funds endpoint."""
     api_key = os.getenv("BROKER_API_KEY")
+    client_id = api_key.split(":::")[0] if api_key and ":::" in api_key else os.getenv("DHAN_CLIENT_ID", "")
 
     # Get the shared httpx client with connection pooling
     client = get_httpx_client()
 
     headers = {
         "access-token": auth_token,
+        "client-id": client_id,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
@@ -33,9 +35,19 @@ def test_auth_token(auth_token):
         res.status = res.status_code
         response_data = json.loads(res.text)
 
-        # Check for authentication errors
+        # Check for authentication errors (Invalid_Authentication or Order_Error with DH-906)
         if response_data.get("errorType") == "Invalid_Authentication":
             error_msg = response_data.get("errorMessage", "Invalid authentication token")
+            return False, error_msg
+
+        # DH-906 "Invalid Token" comes as errorType=Order_Error — must also reject
+        if response_data.get("errorCode") == "DH-906":
+            error_msg = response_data.get("errorMessage", "Invalid Token (DH-906)")
+            return False, error_msg
+
+        # Catch any response with errorType set (general Dhan error envelope)
+        if response_data.get("errorType"):
+            error_msg = response_data.get("errorMessage", response_data.get("errorType"))
             return False, error_msg
 
         # Check for other error types
@@ -54,12 +66,14 @@ def test_auth_token(auth_token):
 def get_margin_data(auth_token):
     """Fetch margin data from Dhan API using the provided auth token."""
     api_key = os.getenv("BROKER_API_KEY")
+    client_id = api_key.split(":::")[0] if api_key and ":::" in api_key else os.getenv("DHAN_CLIENT_ID", "")
 
     # Get the shared httpx client with connection pooling
     client = get_httpx_client()
 
     headers = {
         "access-token": auth_token,
+        "client-id": client_id,
         "Content-Type": "application/json",
         "Accept": "application/json",
     }

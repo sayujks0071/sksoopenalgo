@@ -1,3 +1,5 @@
+import logging
+import random
 import requests
 import time
 from datetime import datetime, timedelta
@@ -49,37 +51,99 @@ except ImportError:
             except ValueError: pass
             return expiry_date
 
+_oc_logger = logging.getLogger("OptionChainClient")
+
+
+class _OCCircuitBreaker:
+    """Lightweight circuit breaker for option chain API calls."""
+
+    def __init__(self, failure_threshold=3, recovery_timeout=120.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self._failures = 0
+        self._last_fail = 0.0
+        self._open = False
+
+    def allow(self) -> bool:
+        if not self._open:
+            return True
+        if time.time() - self._last_fail >= self.recovery_timeout:
+            self._open = False
+            self._failures = 0
+            _oc_logger.info("OC circuit breaker → CLOSED (recovery timeout elapsed)")
+            return True
+        return False
+
+    def success(self):
+        self._failures = 0
+        if self._open:
+            self._open = False
+            _oc_logger.info("OC circuit breaker → CLOSED (success)")
+
+    def failure(self):
+        self._failures += 1
+        self._last_fail = time.time()
+        if self._failures >= self.failure_threshold and not self._open:
+            self._open = True
+            _oc_logger.warning(
+                f"OC circuit breaker → OPEN after {self._failures} consecutive failures"
+            )
+
+
 class OptionChainClient:
     def __init__(self, api_key, host="http://127.0.0.1:5000"):
         self.api_key = api_key
         self.host = host.rstrip('/')
         self.session = requests.Session()
+        self._breaker = _OCCircuitBreaker(failure_threshold=3, recovery_timeout=120)
 
-    def _post(self, endpoint, payload):
+    def _post(self, endpoint, payload, max_retries=3):
         url = f"{self.host}/api/v1/{endpoint}"
         payload["apikey"] = self.api_key
-        try:
-            response = self.session.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"API Error ({endpoint}): {e}", flush=True)
-            return {"status": "error", "message": str(e)}
+
+        if not self._breaker.allow():
+            _oc_logger.warning(f"OC circuit breaker OPEN — skipping {endpoint}")
+            return {"status": "error", "message": "circuit_breaker_open"}
+
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = self.session.post(url, json=payload, timeout=10)
+                response.raise_for_status()
+                self._breaker.success()
+                return response.json()
+            except Exception as e:
+                last_exc = e
+                self._breaker.failure()
+                if attempt < max_retries:
+                    wait = (2 ** attempt) + random.uniform(0, 0.3)
+                    _oc_logger.info(
+                        f"OC retry {attempt + 1}/{max_retries} for {endpoint} in {wait:.1f}s"
+                    )
+                    time.sleep(wait)
+
+        _oc_logger.error(f"OC API Error ({endpoint}) after {max_retries} retries: {last_exc}")
+        return {"status": "error", "message": str(last_exc)}
 
     def expiry(self, underlying, exchange, instrument_type="options"):
         return self._post("expiry", {
-            "underlying": underlying,
+            "symbol": underlying,          # API expects "symbol", not "underlying"
             "exchange": exchange,
-            "instrument_type": instrument_type
+            "instrumenttype": instrument_type  # API expects "instrumenttype" (no underscore)
         })
 
     def optionchain(self, underlying, exchange, expiry_date, strike_count=10):
-        return self._post("optionchain", {
+        res = self._post("optionchain", {
             "underlying": underlying,
             "exchange": exchange,
             "expiry_date": expiry_date,
             "strike_count": strike_count
         })
+        # The API returns the chain under the "chain" key; callers expect "data".
+        # Normalise so both keys work.
+        if isinstance(res, dict) and "chain" in res and "data" not in res:
+            res["data"] = res["chain"]
+        return res
 
     def optionsmultiorder(self, strategy, underlying, exchange, expiry_date, legs):
         return self._post("optionsmultiorder", {
@@ -141,6 +205,176 @@ class OptionChainClient:
         if res.get("status") == "success" and "data" in res:
             return res["data"]
         return None
+
+def validate_multiorder_response(resp: dict, expected_legs: int) -> tuple:
+    """
+    Validates an optionsmultiorder response at the leg level.
+
+    The OpenAlgo /api/v1/optionsmultiorder endpoint can return outer
+    status='success' even when individual legs fail.  This function
+    inspects each inner leg response to detect partial fills.
+
+    Args:
+        resp:           Raw JSON response from optionsmultiorder.
+        expected_legs:  Number of legs we expected to fill.
+
+    Returns:
+        (all_ok, failed_legs, resp)
+        - all_ok:       True only if outer status=success AND every leg succeeded.
+        - failed_legs:  List of dicts describing each failed leg
+                        (index, symbol, action, message).
+        - resp:         The original response dict (pass-through for logging).
+    """
+    failed_legs = []
+
+    # 1. Outer status check
+    if resp.get("status") != "success":
+        _oc_logger.error(f"multiorder outer status={resp.get('status')}: {resp.get('message', '')}")
+        return False, [{"index": -1, "symbol": "ALL", "action": "", "message": resp.get("message", "outer_failure")}], resp
+
+    # 2. Inner leg inspection
+    # The API may return leg results under various keys; try common ones.
+    leg_results = resp.get("results", resp.get("data", resp.get("legs", [])))
+    if not isinstance(leg_results, list):
+        leg_results = []
+
+    # If the API didn't return per-leg results, check for embedded message patterns
+    if not leg_results:
+        # Some API versions embed failures in the message string
+        msg = str(resp.get("message", "")).lower()
+        if "fail" in msg or "rejected" in msg or "error" in msg:
+            _oc_logger.warning(f"multiorder message suggests failure: {resp.get('message')}")
+            failed_legs.append({
+                "index": -1, "symbol": "UNKNOWN", "action": "",
+                "message": resp.get("message", "embedded_failure_in_message")
+            })
+            return False, failed_legs, resp
+        # No per-leg data and no failure signal — trust outer status but warn
+        if expected_legs > 0:
+            _oc_logger.info(
+                f"multiorder: outer success, no per-leg data returned "
+                f"(expected {expected_legs} legs). Treating as OK."
+            )
+        return True, [], resp
+
+    # 3. Validate each leg result
+    for idx, leg in enumerate(leg_results):
+        leg_status = str(leg.get("status", "")).lower()
+        leg_msg = str(leg.get("message", ""))
+
+        is_failed = (
+            leg_status in ("error", "failed", "rejected")
+            or "fail" in leg_msg.lower()
+            or "rejected" in leg_msg.lower()
+            or "error" in leg_msg.lower()
+        )
+
+        if is_failed:
+            failed_legs.append({
+                "index": idx,
+                "symbol": leg.get("symbol", leg.get("tradingsymbol", f"leg_{idx}")),
+                "action": leg.get("action", "?"),
+                "message": leg_msg,
+            })
+
+    # 4. Check leg count mismatch
+    if len(leg_results) != expected_legs:
+        _oc_logger.warning(
+            f"multiorder leg count mismatch: expected {expected_legs}, got {len(leg_results)}"
+        )
+        if not failed_legs:
+            failed_legs.append({
+                "index": -1, "symbol": "COUNT_MISMATCH", "action": "",
+                "message": f"expected {expected_legs} legs, API returned {len(leg_results)}"
+            })
+
+    all_ok = len(failed_legs) == 0
+    if not all_ok:
+        for fl in failed_legs:
+            _oc_logger.error(
+                f"multiorder leg FAILED: idx={fl['index']} sym={fl['symbol']} "
+                f"action={fl['action']} msg={fl['message']}"
+            )
+
+    return all_ok, failed_legs, resp
+
+
+def reconcile_broker_positions(state: dict, api_key: str, host: str = "http://127.0.0.1:5002") -> bool:
+    """
+    Conservative position reconciliation: if local state says we have a
+    position but the broker's positionbook shows FLAT (zero net qty) for
+    ALL relevant symbols, clear local state.
+
+    Only clears when broker shows **zero** positions — never modifies on
+    quantity mismatch (avoids race conditions).
+
+    Args:
+        state:   The strategy's state dict (must have 'position' key).
+        api_key: OpenAlgo API key.
+        host:    OpenAlgo host URL.
+
+    Returns:
+        True if state was cleared (position reconciled to FLAT), False otherwise.
+    """
+    pos = state.get("position")
+    if not pos:
+        return False  # Nothing to reconcile — already flat
+
+    # Gather all option symbols from state
+    short_oc = pos.get("short_oc", [])
+    long_oc = pos.get("long_oc", [])
+    if not short_oc and not long_oc:
+        return False
+
+    # Query broker positionbook
+    try:
+        resp = requests.post(
+            f"{host.rstrip('/')}/api/v1/positionbook",
+            json={"apikey": api_key},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("status") != "success":
+            _oc_logger.warning(f"reconcile: positionbook API failed: {data.get('message', '')}")
+            return False
+    except Exception as e:
+        _oc_logger.warning(f"reconcile: positionbook request error: {e}")
+        return False
+
+    # Build broker position map: symbol -> net qty
+    broker_positions = {}
+    for p in data.get("data", []):
+        sym = p.get("symbol", "")
+        qty = safe_int(p.get("quantity", 0))
+        if sym:
+            broker_positions[sym] = qty
+
+    # Check: if ALL option symbols show zero qty at broker → state is stale
+    all_flat = True
+    for strike_label, opt_type in short_oc + long_oc:
+        # We don't have exact symbol names in state, but we can check
+        # if there are ANY NFO positions at all
+        pass
+
+    # Simpler approach: check if broker has ANY non-zero NFO/MCX positions
+    # that look like options (contain CE/PE in symbol)
+    nfo_positions = {
+        sym: qty for sym, qty in broker_positions.items()
+        if qty != 0 and ("CE" in sym.upper() or "PE" in sym.upper())
+    }
+
+    if nfo_positions:
+        # Broker still has option positions — don't clear
+        return False
+
+    # Broker shows zero option positions — local state is stale
+    _oc_logger.warning(
+        f"reconcile: LOCAL state has position but BROKER shows FLAT. "
+        f"Clearing local state. short_oc={short_oc} long_oc={long_oc}"
+    )
+    state["position"] = None
+    return True
+
 
 class OptionPositionTracker:
     def __init__(self, sl_pct, tp_pct, max_hold_min):

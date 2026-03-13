@@ -62,3 +62,9 @@ Untitled.rtf
 
 # ── Nested git repo — managed separately ─────────────────────────────────────
 openalgo/
+
+# ── Added for trading safety ──────────────────────────────────────────────────
+backup/
+backups/
+*.keys
+*backup*

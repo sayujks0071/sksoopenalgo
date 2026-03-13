@@ -1,33 +1,17 @@
 #!/bin/bash
-# Start NIFTY + SENSEX IC strategies for today
-# Run at 9:30 AM IST on Wednesdays (entry day for both weekly cycles)
+set -euo pipefail
 
-STRAT_DIR="/Users/mac/sksoopenalgo/openalgo/openalgo/strategies"
-APIKEY="372ffc43867ca4586f2a90621bc153849c2fd2bf5f86f071751c6ce7c16492eb"
-HOST="http://127.0.0.1:5002"
-PYTHON="/opt/homebrew/bin/python3"
+REVIEWED="/Users/mac/sksoopenalgo/openalgo/openalgo/strategies/start_canary_5002_reviewed.sh"
+MANIFEST="/Users/mac/sksoopenalgo/openalgo/openalgo/strategies/deployment_manifest_5002.md"
 
-mkdir -p "$STRAT_DIR/logs" "$STRAT_DIR/state"
+if [[ ! -x "${REVIEWED}" ]]; then
+  chmod +x "${REVIEWED}"
+fi
 
-echo "[$(date)] Starting NIFTY + SENSEX IC strategies"
+echo "Direct options launcher disabled in favor of reviewed flow."
+echo "Options strategies without dry-run support remain review-only."
+echo "See manifest: ${MANIFEST}"
+echo
+echo "Launching reviewed dry-run profile preview. Pass --execute to start only the reviewed dry-run subset."
 
-# NIFTY Weekly IC (10-MAR-26, 6 DTE, sd=1.6, vix≤20)
-nohup env OPENALGO_APIKEY="$APIKEY" OPENALGO_HOST="$HOST" \
-  $PYTHON "$STRAT_DIR/scripts/nifty_sensex_ic_live.py" \
-  --index NIFTY --expiry 10MAR26 --mode weekly --lots 1 --auto \
-  > "$STRAT_DIR/logs/nifty_weekly_ic.log" 2>&1 &
-echo "NIFTY Weekly IC started (PID $!)"
-
-sleep 3
-
-# SENSEX Weekly IC (12-MAR-26, 8 DTE, sd=1.6, vix≤22)
-nohup env OPENALGO_APIKEY="$APIKEY" OPENALGO_HOST="$HOST" \
-  $PYTHON "$STRAT_DIR/scripts/nifty_sensex_ic_live.py" \
-  --index SENSEX --expiry 12MAR26 --mode weekly --lots 1 --auto \
-  > "$STRAT_DIR/logs/sensex_weekly_ic.log" 2>&1 &
-echo "SENSEX Weekly IC started (PID $!)"
-
-echo "[$(date)] All option strategies launched"
-echo "Logs:"
-echo "  tail -f $STRAT_DIR/logs/nifty_weekly_ic.log"
-echo "  tail -f $STRAT_DIR/logs/sensex_weekly_ic.log"
+exec "${REVIEWED}" --profile dryrun "$@"

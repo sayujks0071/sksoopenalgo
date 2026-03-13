@@ -3,32 +3,143 @@ import json
 import logging
 import os
 import pickle
+import random
 import time
 import time as time_module
 from datetime import datetime, timedelta
 from datetime import time as dt_time
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import numpy as np
 import pandas as pd
 import pytz
 
-class _HttpxClientStub:
-    """Wraps httpx.post/get and silently drops unsupported kwargs like max_retries/backoff_factor."""
-    _UNSUPPORTED = {"max_retries", "backoff_factor"}
 
-    def _clean(self, kwargs):
-        return {k: v for k, v in kwargs.items() if k not in self._UNSUPPORTED}
+# ---------------------------------------------------------------------------
+#  Resilient HTTP infrastructure: CircuitBreaker + ResilientHttpClient
+# ---------------------------------------------------------------------------
+
+class CircuitBreaker:
+    """
+    Three-state circuit breaker: CLOSED → OPEN → HALF_OPEN → CLOSED.
+    Prevents hammering a failing endpoint and allows graceful recovery.
+    """
+
+    def __init__(self, failure_threshold: int = 8, recovery_timeout: float = 30.0,
+                 half_open_max: int = 2):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max = half_open_max
+        self._failure_count = 0
+        self._last_failure_time = 0.0
+        self._state = "CLOSED"          # CLOSED | OPEN | HALF_OPEN
+        self._half_open_attempts = 0
+
+    @property
+    def state(self) -> str:
+        if self._state == "OPEN":
+            if time.time() - self._last_failure_time >= self.recovery_timeout:
+                self._state = "HALF_OPEN"
+                self._half_open_attempts = 0
+        return self._state
+
+    def allow_request(self) -> bool:
+        s = self.state
+        if s == "CLOSED":
+            return True
+        if s == "HALF_OPEN":
+            return self._half_open_attempts < self.half_open_max
+        return False  # OPEN
+
+    def record_success(self):
+        if self._state == "HALF_OPEN":
+            self._state = "CLOSED"
+        self._failure_count = 0
+
+    def record_failure(self):
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+        if self._state == "HALF_OPEN":
+            self._half_open_attempts += 1
+            if self._half_open_attempts >= self.half_open_max:
+                self._state = "OPEN"
+        elif self._failure_count >= self.failure_threshold:
+            self._state = "OPEN"
+
+
+class ResilientHttpClient:
+    """
+    Drop-in replacement for the old _HttpxClientStub.
+    Provides retry with exponential backoff + jitter + per-host circuit breakers.
+
+    Custom kwargs ``max_retries`` and ``backoff_factor`` are consumed here and
+    NOT forwarded to httpx, preserving backward compatibility.
+    """
+
+    _CUSTOM_KWARGS = {"max_retries", "backoff_factor"}
+
+    def __init__(self):
+        self._client = httpx.Client(timeout=10.0, follow_redirects=True)
+        self._breakers: dict[str, CircuitBreaker] = {}
+        self._logger = logging.getLogger("ResilientHttp")
+
+    def _get_breaker(self, url: str) -> CircuitBreaker:
+        host = urlparse(url).netloc
+        if host not in self._breakers:
+            self._breakers[host] = CircuitBreaker()
+        return self._breakers[host]
+
+    def _request(self, method: str, url: str, **kwargs):
+        max_retries = kwargs.pop("max_retries", 3)
+        backoff_factor = kwargs.pop("backoff_factor", 1.0)
+        # Also strip any other unsupported keys added by callers
+        for k in list(kwargs):
+            if k in self._CUSTOM_KWARGS:
+                kwargs.pop(k)
+
+        breaker = self._get_breaker(url)
+        if not breaker.allow_request():
+            self._logger.warning(f"Circuit breaker OPEN for {url} — failing fast")
+            raise ConnectionError(f"Circuit breaker open for {url}")
+
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = getattr(self._client, method)(url, **kwargs)
+                if resp.status_code < 500:
+                    breaker.record_success()
+                    return resp
+                # 5xx → retriable server error
+                last_exc = httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}",
+                    request=resp.request, response=resp,
+                )
+                breaker.record_failure()
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError,
+                    ConnectionError, OSError) as e:
+                last_exc = e
+                breaker.record_failure()
+
+            if attempt < max_retries:
+                wait = backoff_factor * (2 ** attempt) + random.uniform(0, 0.5)
+                self._logger.info(
+                    f"Retry {attempt + 1}/{max_retries} for {method.upper()} {url} in {wait:.1f}s"
+                )
+                time.sleep(wait)
+
+        raise last_exc or Exception(f"All {max_retries} retries exhausted for {url}")
 
     def post(self, url, **kwargs):
-        return httpx.post(url, **self._clean(kwargs))
+        return self._request("post", url, **kwargs)
 
     def get(self, url, **kwargs):
-        return httpx.get(url, **self._clean(kwargs))
+        return self._request("get", url, **kwargs)
 
-httpx_client = _HttpxClientStub()
+
+httpx_client = ResilientHttpClient()
 
 # Configure logging
 try:
@@ -297,17 +408,29 @@ class PositionManager:
         self._host     = kwargs.get("host", os.environ.get("OPENALGO_HOST", "http://127.0.0.1:5002")).rstrip("/")
         self._strategy = kwargs.get("strategy", "equity_strategy")
         self._quantity = kwargs.get("quantity", 0)
+        self.dry_run   = bool(kwargs.get("dry_run", False))
+        if self.dry_run:
+            logger.warning(
+                f"[DRY-RUN] PositionManager for {symbol} (strategy={self._strategy}): "
+                f"order placement DISABLED — all orders will be simulated, no real API calls"
+            )
 
         # Determine state directory relative to this file
         # this file: openalgo/strategies/utils/trading_utils.py
         # target: openalgo/strategies/state/
         self.state_dir = Path(__file__).resolve().parent.parent / "state"
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.state_file = self.state_dir / f"{self.symbol}_state.json"
+        # Dry-run strategies get an isolated state file so they cannot accidentally
+        # share position state with a live strategy trading the same symbol.
+        if self.dry_run:
+            self.state_file = self.state_dir / f"DRYRUN_{self._strategy}_{self.symbol}_state.json"
+        else:
+            self.state_file = self.state_dir / f"{self.symbol}_state.json"
 
         self.position = 0
         self.entry_price = 0.0
         self.pnl = 0.0
+        self._extra_state = {}   # strategy-specific fields (sl_price, tp_price, etc.)
 
         self.load_state()
 
@@ -315,14 +438,64 @@ class PositionManager:
         """Return current net position (positive=long, negative=short, 0=flat)."""
         return self.position
 
-    def place_order(self, action: str, qty: int, target_pos: int) -> dict:
+    def place_order(self, action: str, qty: int, target_pos: int,
+                    pricetype: str = "LIMIT", price: float = 0.0,
+                    limit_offset_pct: float = 0.05) -> dict:
         """
-        Place a market order via OpenAlgo placesmartorder endpoint.
+        Place an order via OpenAlgo placesmartorder endpoint.
+
+        pricetype: "LIMIT" (default — reduces slippage) or "MARKET" (legacy).
+        price:     Explicit limit price (0 = auto-compute from last price + offset).
+        limit_offset_pct: Buffer % above/below last price for auto LIMIT orders
+                          (0.05 = 0.05% → ₹0.05 per ₹100). Ignored when pricetype=MARKET
+                          or when price > 0.
+
         action: 'BUY' or 'SELL'
         qty: number of shares/contracts
         target_pos: desired net position after order (used as position_size)
         Returns dict with 'status' key: 'success' or 'error'.
         """
+        # Auto-compute limit price if LIMIT and no explicit price given
+        order_price = "0"
+        order_pricetype = pricetype.upper()
+        if order_pricetype == "LIMIT" and price <= 0:
+            # Fetch last traded price from state (entry_price as proxy)
+            # or fall back to MARKET if we can't determine a price
+            ltp = self.entry_price if self.entry_price > 0 else 0.0
+            if ltp > 0:
+                offset = ltp * (limit_offset_pct / 100.0)
+                if action.upper() == "BUY":
+                    order_price = str(round(ltp + offset, 2))  # slightly above LTP
+                else:
+                    order_price = str(round(ltp - offset, 2))  # slightly below LTP
+            else:
+                # No reference price available — fall back to MARKET safely
+                order_pricetype = "MARKET"
+                order_price = "0"
+                logger.warning(
+                    f"No reference price for LIMIT — falling back to MARKET for "
+                    f"{action} {qty} {self.symbol}"
+                )
+        elif order_pricetype == "LIMIT" and price > 0:
+            order_price = str(round(price, 2))
+
+        # ── Dry-run guard ─────────────────────────────────────────────────────
+        # If this PositionManager was created with dry_run=True, we NEVER call
+        # the broker API.  We simulate a successful order, update local position
+        # state (so the strategy's in-memory tracking stays consistent), and
+        # write to the isolated DRYRUN_ state file.  No real money at risk.
+        if self.dry_run:
+            _sim_price = float(order_price) if float(order_price) > 0 else self.entry_price
+            fake_id = f"DRY_RUN_{int(__import__('time').time())}"
+            logger.info(
+                f"[DRY-RUN] Would place {action} {qty} {self.symbol} "
+                f"@ {order_price} ({order_pricetype}) target_pos={target_pos} "
+                f"→ simulated order {fake_id}"
+            )
+            self.update_position(qty, _sim_price, action)
+            return {"orderid": fake_id, "status": "success"}
+        # ──────────────────────────────────────────────────────────────────────
+
         url = f"{self._host}/api/v1/placesmartorder"
         payload = {
             "apikey": self._api_key,
@@ -330,11 +503,11 @@ class PositionManager:
             "symbol": self.symbol,
             "action": action,
             "exchange": self._exchange,
-            "pricetype": "MARKET",
+            "pricetype": order_pricetype,
             "product": self._product,
             "quantity": str(qty),
             "position_size": str(target_pos),
-            "price": "0",
+            "price": order_price,
             "trigger_price": "0",
             "disclosed_quantity": "0",
         }
@@ -365,13 +538,28 @@ class PositionManager:
                     self.position = data.get("position", 0)
                     self.entry_price = data.get("entry_price", 0.0)
                     self.pnl = data.get("pnl", 0.0)
+                    # Load any extra strategy-specific fields
+                    _core = {"position", "entry_price", "pnl", "last_updated"}
+                    for k, v in data.items():
+                        if k not in _core:
+                            self._extra_state[k] = v
                     logger.info(
                         f"Loaded state for {self.symbol}: Pos={self.position} @ {self.entry_price}"
+                        + (f" extras={list(self._extra_state.keys())}" if self._extra_state else "")
                     )
             except Exception as e:
                 logger.error(f"Failed to load state for {self.symbol}: {e}")
 
-    def save_state(self):
+    def get_extra(self, key, default=None):
+        """Retrieve a strategy-specific persisted field (sl_price, tp_price, etc.)."""
+        return self._extra_state.get(key, default)
+
+    def save_state(self, **extra):
+        """Save position state.  Extra kwargs are persisted alongside core fields.
+
+        Example:  pm.save_state(sl_price=850.0, tp_price=920.0)
+        Backward compatible: pm.save_state() works as before.
+        """
         try:
             data = {
                 "position": self.position,
@@ -379,8 +567,16 @@ class PositionManager:
                 "pnl": self.pnl,
                 "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
-            with open(self.state_file, "w") as f:
+            # Merge extra strategy-specific fields
+            if extra:
+                self._extra_state.update(extra)
+            if self._extra_state:
+                data.update(self._extra_state)
+            # Atomic write: write to temp then rename
+            tmp = self.state_file.with_suffix(".tmp")
+            with open(tmp, "w") as f:
                 json.dump(data, f, indent=4)
+            tmp.replace(self.state_file)
         except Exception as e:
             logger.error(f"Failed to save state for {self.symbol}: {e}")
 
@@ -645,7 +841,6 @@ class APIClient:
         self.quote_cache = {}  # Key: symbol, Value: (timestamp, data)
         self.quote_ttl = 1.0   # 1 second TTL
 
-    @lru_cache(maxsize=128)
     def history(
         self,
         symbol,
@@ -655,7 +850,9 @@ class APIClient:
         end_date=None,
         max_retries=3,
     ):
-        """Fetch historical data with retry logic, exponential backoff, and in-memory caching."""
+        """Fetch historical data with retry logic, exponential backoff, and file caching.
+        NOTE: @lru_cache removed — it froze intraday data all day (same date args = same cache key).
+        FileCache inside correctly skips caching for today's end_date."""
         # Check Cache first
         cache_key = f"{symbol}_{exchange}_{interval}_{start_date}_{end_date}"
         cached_df = self.cache.get(cache_key)
@@ -689,11 +886,17 @@ class APIClient:
             "apikey": self.api_key,
         }
         try:
+            # EOD guard: after 15:15 IST Dhan's history feed is congested.
+            # Use a short timeout + single retry to avoid 90s blocking at market close.
+            _now_min = datetime.now().hour * 60 + datetime.now().minute
+            _eod = (_now_min >= 15 * 60 + 15)
+            _timeout = 5 if _eod else 30
+            _retries = 1 if _eod else max_retries
             response = httpx_client.post(
                 url,
                 json=payload,
-                timeout=30,
-                max_retries=max_retries,
+                timeout=_timeout,
+                max_retries=_retries,
                 backoff_factor=1.0,
             )
 
@@ -1100,24 +1303,41 @@ def safe_int(value, default=0):
         return default
 
 def normalize_expiry(expiry_date):
-    """Normalizes expiry date string to DDMMMYY format (e.g., 14FEB26)."""
+    """Normalizes expiry date string to DDMMMYY format (e.g., 14FEB26).
+    Handles both 'DDMMMYY' (e.g. '10MAR26') and 'DD-MMM-YY' (e.g. '10-MAR-26')."""
     if not expiry_date:
         return None
+    expiry_date = expiry_date.strip().upper()
+    # Already in DDMMMYY format?
     try:
-        # If already in format, return as is (uppercase)
-        # Check if it matches expected format length roughly
-        expiry_date = expiry_date.strip().upper()
-        datetime.strptime(expiry_date, "%d%b%y")
-        return expiry_date
+        dt = datetime.strptime(expiry_date, "%d%b%y")
+        return dt.strftime("%d%b%y").upper()
     except ValueError:
         pass
-
-    # Try other formats if needed, but usually API returns DDMMMYY
+    # Try DD-MMM-YY format (returned by /api/v1/expiry endpoint)
+    try:
+        dt = datetime.strptime(expiry_date, "%d-%b-%y")
+        return dt.strftime("%d%b%y").upper()
+    except ValueError:
+        pass
+    # Unknown format — return as-is
     return expiry_date
+
+def _parse_expiry_str(d_str):
+    """Parse an expiry string (DDMMMYY or DD-MMM-YY) and return (date, normalised_str) or None."""
+    s = d_str.strip().upper()
+    for fmt in ("%d%b%y", "%d-%b-%y"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.date(), dt.strftime("%d%b%y").upper()
+        except ValueError:
+            pass
+    return None
 
 def choose_nearest_expiry(expiry_dates):
     """
-    Selects the nearest future expiry date from a list of strings (DDMMMYY).
+    Selects the nearest future expiry date from a list of strings.
+    Accepts both 'DDMMMYY' and 'DD-MMM-YY' formats; always returns 'DDMMMYY'.
     """
     if not expiry_dates:
         return None
@@ -1126,17 +1346,17 @@ def choose_nearest_expiry(expiry_dates):
     valid_dates = []
 
     for d_str in expiry_dates:
-        try:
-            d_date = datetime.strptime(d_str, "%d%b%y").date()
-            if d_date >= today:
-                valid_dates.append((d_date, d_str))
-        except ValueError:
+        parsed = _parse_expiry_str(d_str)
+        if parsed is None:
             continue
+        d_date, norm_str = parsed
+        if d_date >= today:
+            valid_dates.append((d_date, norm_str))
 
     if not valid_dates:
         return None
 
-    # Sort by date and return the string of the earliest one
+    # Sort by date and return the normalised string of the earliest one
     valid_dates.sort(key=lambda x: x[0])
     return valid_dates[0][1]
 
@@ -1144,6 +1364,7 @@ def choose_nearest_expiry(expiry_dates):
 def choose_monthly_expiry(expiry_dates):
     """
     Selects the nearest monthly expiry date (last expiry of the month).
+    Accepts both 'DDMMMYY' and 'DD-MMM-YY' formats; always returns 'DDMMMYY'.
     """
     if not expiry_dates:
         return None
@@ -1152,26 +1373,26 @@ def choose_monthly_expiry(expiry_dates):
     future_dates = []
 
     for d_str in expiry_dates:
-        try:
-            d_date = datetime.strptime(d_str, "%d%b%y").date()
-            if d_date >= today:
-                future_dates.append((d_date, d_str))
-        except ValueError:
+        parsed = _parse_expiry_str(d_str)
+        if parsed is None:
             continue
+        d_date, norm_str = parsed
+        if d_date >= today:
+            future_dates.append((d_date, norm_str))
 
     if not future_dates:
         return None
 
     # Group by (Year, Month) and find the max date in each group
     monthly_expiries = {}
-    for d_date, d_str in future_dates:
+    for d_date, norm_str in future_dates:
         key = (d_date.year, d_date.month)
         if key not in monthly_expiries:
-            monthly_expiries[key] = (d_date, d_str)
+            monthly_expiries[key] = (d_date, norm_str)
         else:
             # Update if current date is greater than stored date for this month
             if d_date > monthly_expiries[key][0]:
-                monthly_expiries[key] = (d_date, d_str)
+                monthly_expiries[key] = (d_date, norm_str)
 
     # Collect all monthly expiries
     final_candidates = list(monthly_expiries.values())

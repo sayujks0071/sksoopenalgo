@@ -434,3 +434,251 @@ def create_risk_manager(strategy_name: str, exchange: str = "NSE",
     """
     config = {k: v for k, v in kwargs.items() if k in RiskManager.DEFAULT_CONFIG}
     return RiskManager(strategy_name, exchange, capital, config)
+
+
+class PortfolioRiskMonitor:
+    """
+    Portfolio-level risk monitor that enforces daily/weekly loss limits across ALL strategies.
+
+    When any limit is breached, writes PORTFOLIO_HALT.json to the state directory.
+    The supervisor reads this file before launching any strategy process, and existing
+    strategies check it via check_halt() to avoid placing new orders.
+
+    Default limits (₹11,56,121 capital):
+    - Daily portfolio loss:   ₹23,122  (2%)
+    - Weekly portfolio loss:  ₹57,806  (5%)
+    - Per-strategy daily:     ₹5,000
+
+    Usage in supervisor:
+        monitor = PortfolioRiskMonitor()
+        halted, reason = monitor.check_halt()
+        if halted:
+            log.critical(f"Trading halted: {reason}")
+
+    Usage in strategy (after each closed trade):
+        halt_reason = monitor.record_pnl("MCX_SILVER", realized_pnl)
+        if halt_reason:
+            stop_new_orders()
+    """
+
+    HALT_FILE_NAME = "PORTFOLIO_HALT.json"
+    PNL_FILE_NAME  = "portfolio_pnl.json"
+
+    # Absolute ₹ limits derived from ₹11,56,121 capital
+    DEFAULT_LIMITS: Dict[str, float] = {
+        'daily_portfolio_loss':    23122.0,   # 2% of ₹11,56,121
+        'weekly_portfolio_loss':   57806.0,   # 5% of ₹11,56,121
+        'per_strategy_daily_loss':  5000.0,   # ₹5,000 per strategy per day
+    }
+
+    def __init__(self, state_dir: Optional[str] = None,
+                 limits: Optional[Dict[str, float]] = None):
+        """
+        Args:
+            state_dir: Directory for halt/pnl state files (default: strategies/state/)
+            limits: Override DEFAULT_LIMITS (absolute ₹ amounts)
+        """
+        if state_dir:
+            self.state_dir = Path(state_dir)
+        else:
+            self.state_dir = Path(__file__).resolve().parent.parent / "state"
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+
+        self.halt_file = self.state_dir / self.HALT_FILE_NAME
+        self.pnl_file  = self.state_dir / self.PNL_FILE_NAME
+        self.limits    = {**self.DEFAULT_LIMITS, **(limits or {})}
+
+        self._pnl_data: Dict = self._load_pnl_state()
+        logger.info(
+            f"PortfolioRiskMonitor ready | limits: daily=₹{self.limits['daily_portfolio_loss']:,.0f} "
+            f"weekly=₹{self.limits['weekly_portfolio_loss']:,.0f} "
+            f"per-strat=₹{self.limits['per_strategy_daily_loss']:,.0f}"
+        )
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')
+
+    @staticmethod
+    def _week_key() -> str:
+        """ISO year-week key, e.g. '2026-W10'.  Resets every Monday."""
+        now = datetime.now(pytz.timezone('Asia/Kolkata'))
+        iso = now.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+
+    def _load_pnl_state(self) -> Dict:
+        if self.pnl_file.exists():
+            try:
+                with open(self.pnl_file) as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"PortfolioRiskMonitor: could not load PnL state: {e}")
+        return {}
+
+    def _save_pnl_state(self):
+        try:
+            with open(self.pnl_file, 'w') as f:
+                json.dump(self._pnl_data, f, indent=2)
+        except Exception as e:
+            logger.error(f"PortfolioRiskMonitor: could not save PnL state: {e}")
+
+    # ------------------------------------------------------------------ core API
+
+    def record_pnl(self, strategy_name: str, pnl: float) -> Optional[str]:
+        """
+        Record a realized P&L event for one strategy and check all limits.
+
+        Args:
+            strategy_name: Strategy identifier (e.g. "MCX_SILVER")
+            pnl: Realized P&L in ₹ (negative = loss, positive = profit)
+
+        Returns:
+            Halt reason string if a limit was breached, else None.
+        """
+        today = self._today()
+        week  = self._week_key()
+
+        # ---- initialise nested structures ----
+        self._pnl_data.setdefault('daily', {})
+        self._pnl_data['daily'].setdefault(today, {'portfolio': 0.0, 'strategies': {}})
+        self._pnl_data.setdefault('weekly', {})
+        self._pnl_data['weekly'].setdefault(week, 0.0)
+
+        # ---- accumulate ----
+        self._pnl_data['daily'][today]['portfolio'] += pnl
+        strats = self._pnl_data['daily'][today]['strategies']
+        strats[strategy_name] = strats.get(strategy_name, 0.0) + pnl
+        self._pnl_data['weekly'][week] += pnl
+
+        self._save_pnl_state()
+
+        # ---- check limits (most severe first) ----
+        daily_port  = self._pnl_data['daily'][today]['portfolio']
+        weekly_port = self._pnl_data['weekly'][week]
+        strat_daily = strats[strategy_name]
+
+        halt_reason: Optional[str] = None
+
+        if daily_port <= -self.limits['daily_portfolio_loss']:
+            halt_reason = (
+                f"DAILY PORTFOLIO LOSS LIMIT BREACHED: "
+                f"₹{-daily_port:,.0f} >= ₹{self.limits['daily_portfolio_loss']:,.0f} (2% of capital)"
+            )
+        elif weekly_port <= -self.limits['weekly_portfolio_loss']:
+            halt_reason = (
+                f"WEEKLY PORTFOLIO LOSS LIMIT BREACHED: "
+                f"₹{-weekly_port:,.0f} >= ₹{self.limits['weekly_portfolio_loss']:,.0f} (5% of capital)"
+            )
+        elif strat_daily <= -self.limits['per_strategy_daily_loss']:
+            halt_reason = (
+                f"PER-STRATEGY DAILY LOSS LIMIT BREACHED ({strategy_name}): "
+                f"₹{-strat_daily:,.0f} >= ₹{self.limits['per_strategy_daily_loss']:,.0f}"
+            )
+
+        if halt_reason:
+            self._write_halt(halt_reason)
+
+        return halt_reason
+
+    def check_halt(self) -> tuple[bool, str]:
+        """
+        Check if portfolio trading is halted.
+
+        Returns:
+            (is_halted: bool, reason: str)
+        """
+        if not self.halt_file.exists():
+            return False, "OK"
+
+        try:
+            with open(self.halt_file) as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error(f"PortfolioRiskMonitor: could not read halt file: {e}")
+            return False, f"Error reading halt file: {e}"
+
+        if not data.get('halted', False):
+            return False, "Halt file present but halted=false"
+
+        # Auto-clear stale halts from previous trading days
+        halt_date = data.get('date', '')
+        today = self._today()
+        if halt_date and halt_date != today:
+            logger.info(
+                f"PortfolioRiskMonitor: stale halt from {halt_date} — auto-clearing"
+            )
+            self.clear_halt()
+            return False, f"Stale halt from {halt_date} auto-cleared"
+
+        return True, data.get('reason', 'Portfolio halted — see PORTFOLIO_HALT.json')
+
+    def clear_halt(self):
+        """
+        Clear the portfolio halt.  Call manually after investigating losses,
+        or at start of a new trading day (the supervisor's morning preflight does this).
+        """
+        if self.halt_file.exists():
+            self.halt_file.unlink()
+            logger.info("PortfolioRiskMonitor: halt cleared")
+
+    def get_portfolio_pnl(self) -> Dict:
+        """Return current portfolio P&L summary for dashboards / preflight."""
+        today = self._today()
+        week  = self._week_key()
+
+        day_data   = self._pnl_data.get('daily', {}).get(today, {'portfolio': 0.0, 'strategies': {}})
+        weekly_pnl = self._pnl_data.get('weekly', {}).get(week, 0.0)
+
+        halted, halt_reason = self.check_halt()
+
+        return {
+            'date':                  today,
+            'week':                  week,
+            'daily_portfolio_pnl':   day_data['portfolio'],
+            'weekly_portfolio_pnl':  weekly_pnl,
+            'strategy_pnl':          day_data['strategies'].copy(),
+            'daily_loss_remaining':  self.limits['daily_portfolio_loss']  + day_data['portfolio'],
+            'weekly_loss_remaining': self.limits['weekly_portfolio_loss'] + weekly_pnl,
+            'is_halted':             halted,
+            'halt_reason':           halt_reason if halted else None,
+        }
+
+    # ------------------------------------------------------------------ private
+
+    def _write_halt(self, reason: str):
+        """Write PORTFOLIO_HALT.json to signal supervisor + strategies to stop trading."""
+        halt_data = {
+            'halted':   True,
+            'reason':   reason,
+            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
+            'date':     self._today(),
+            'resume_instructions': (
+                "Investigate the loss cause, then: "
+                "(1) python3 strategies/preflight.py --clear-halt  "
+                "OR (2) delete this file  "
+                "OR (3) set halted=false in this file"
+            ),
+        }
+        with open(self.halt_file, 'w') as f:
+            json.dump(halt_data, f, indent=2)
+        logger.critical(f"PORTFOLIO HALT WRITTEN: {reason}")
+
+
+# Singleton helper — import and call from any strategy or supervisor
+_portfolio_monitor: Optional[PortfolioRiskMonitor] = None
+
+
+def get_portfolio_monitor(state_dir: Optional[str] = None,
+                          limits: Optional[Dict] = None) -> PortfolioRiskMonitor:
+    """
+    Return (or create) the process-level PortfolioRiskMonitor singleton.
+
+    Since each strategy runs as a separate OS process (not threads), each process
+    gets its own instance.  State is shared via the JSON files in state/.
+    """
+    global _portfolio_monitor
+    if _portfolio_monitor is None:
+        _portfolio_monitor = PortfolioRiskMonitor(state_dir=state_dir, limits=limits)
+    return _portfolio_monitor

@@ -16,7 +16,7 @@ def _load_dotenv():
 _load_dotenv()
 
 # ─── API & BROKER ────────────────────────────────────────────────────────────
-_FALLBACK_KEY = "372ffc43867ca4586f2a90621bc153849c2fd2bf5f86f071751c6ce7c16492eb"
+_FALLBACK_KEY = "09854f66270c372a56b5560970270d00e375d2e63131a3f5d9dd0f7d2505aae7"
 OPENALGO_KEY  = os.environ.get("OPENALGO_API_KEY", _FALLBACK_KEY)
 OPENALGO_URL  = "http://127.0.0.1:5002/api/v1"
 LOT_SIZE      = 65

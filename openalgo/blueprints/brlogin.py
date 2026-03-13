@@ -809,25 +809,49 @@ def auto_login():
     session["user"] = username
 
     auth_token = get_auth_token(username)
-    if not auth_token:
-        logger.warning("[auto-login] No auth token in DB — run morning cron first")
-        return (
-            "<h2>No auth token found.</h2>"
-            "<p>Run: <code>python3 /Users/mac/openalgo/scripts/dhan_trading_login.py</code></p>"
-        ), 503
 
-    # Validate token is still accepted by Dhan
+    # Validate DB token is still accepted by Dhan
     from broker.dhan.api.funds import test_auth_token
 
-    is_valid, validation_error = test_auth_token(auth_token)
-    if not is_valid:
-        logger.warning(f"[auto-login] Token invalid: {validation_error}")
-        return (
-            f"<h2>Auth token rejected by Dhan.</h2><p>{validation_error}</p>"
-            f"<p>Re-run: <code>python3 /Users/mac/openalgo/scripts/dhan_trading_login.py</code></p>"
-        ), 503
+    is_valid = False
+    validation_error = "No DB token"
 
-    logger.info(f"[auto-login] Token valid — creating session for {username}")
+    if auth_token:
+        is_valid, validation_error = test_auth_token(auth_token)
+
+    # Env-token fallback: if DB token is missing or rejected, try DHAN_ACCESS_TOKEN from .env
+    if not is_valid:
+        env_token = os.getenv("DHAN_ACCESS_TOKEN")
+        if env_token:
+            logger.info("[auto-login] DB token invalid — falling back to DHAN_ACCESS_TOKEN env var")
+            env_valid, env_error = test_auth_token(env_token)
+            if env_valid:
+                # Store in DB and flush stale in-process cache so background tasks
+                # immediately pick up the new token (TTLCache may hold old value)
+                from database.auth_db import upsert_auth, auth_cache
+                client_id = os.getenv("BROKER_API_KEY", "").split(":::")[0]
+                upsert_auth(username, env_token, "dhan", user_id=client_id)
+                _cache_key = f"auth-{username}"
+                if _cache_key in auth_cache:
+                    del auth_cache[_cache_key]
+                logger.info(f"[auto-login] Env token valid — stored in DB, creating session for {username}")
+                return handle_auth_success(env_token, username, "dhan")
+            else:
+                logger.warning(f"[auto-login] Env token also rejected by Dhan: {env_error}")
+                return (
+                    f"<h2>Both DB and .env tokens rejected by Dhan.</h2>"
+                    f"<p>DB error: {validation_error}</p>"
+                    f"<p>Env error: {env_error}</p>"
+                    f"<p>Paste a fresh token into DHAN_ACCESS_TOKEN in your .env and restart OpenAlgo.</p>"
+                ), 503
+        else:
+            logger.warning(f"[auto-login] DB token invalid and no DHAN_ACCESS_TOKEN env var set: {validation_error}")
+            return (
+                f"<h2>Auth token rejected by Dhan.</h2><p>{validation_error}</p>"
+                f"<p>Set DHAN_ACCESS_TOKEN in your .env file and restart OpenAlgo.</p>"
+            ), 503
+
+    logger.info(f"[auto-login] DB token valid — creating session for {username}")
     # handle_auth_success sets logged_in=True, login_time, broker, etc. and redirects
     return handle_auth_success(auth_token, username, "dhan")
 

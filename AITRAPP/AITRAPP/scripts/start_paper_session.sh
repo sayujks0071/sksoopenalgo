@@ -95,7 +95,9 @@ echo ""
 # Start in background and capture PID
 mkdir -p logs
 (
-    cd /Users/mac/AITRAPP
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    cd "${PROJECT_ROOT}"
     export APP_MODE=PAPER
     export PORT=${PORT}
     nohup python3 -m uvicorn apps.api.main:app --host 0.0.0.0 --port ${PORT} > logs/api_${PORT}.log 2>&1 &
@@ -139,4 +141,3 @@ echo "   4. Test trade: python scripts/synthetic_plan_injector.py --symbol NIFTY
 echo "   5. Check metrics: curl -s ${API}/metrics | grep trader_"
 echo ""
 echo "🛑 To stop: kill \$(cat /tmp/aitrapp_api_${PORT}.pid)"
-

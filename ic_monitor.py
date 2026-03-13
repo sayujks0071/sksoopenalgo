@@ -20,10 +20,16 @@ New in v3:
   - ROLL_ZONE = 80: new exit condition (wider than GAMMA_ZONE_PARTIAL=60)
   - 5 new state keys: ce_rolled, pe_rolled, mae, adjustments, regime_at_entry
 """
-import time, json, requests, sys, os, signal, re, socket, atexit, glob
+import time, json, requests, sys, os, signal, re, socket, atexit, glob, gc, ctypes
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # ─── PERSISTENT HTTP SESSION (connection reuse to localhost:5002) ─────────────
 _http = requests.Session()
@@ -82,7 +88,7 @@ state = {
     "current_vix": 0.0,     # latest VIX reading
     "nifty_entry": 0.0,     # NIFTY at Wave 1 entry
     "entry_time": None,
-    "alerts_sent": set(),   # dedup: log each alert key only once
+    "alerts_sent": OrderedDict(),  # dedup cache capped to prevent unbounded growth
     "expiry": _get_expiry(),   # auto-computed from ic_config — no manual weekly update needed
     # ── v3 additions ─────────────────────────────────────────────────────────
     "ce_rolled": False,     # True after CE side has been rolled once this session
@@ -102,6 +108,11 @@ state = {
     "consec_failures": 0,   # consecutive iterations where get_positions() returned {}
     "infra_retry_count": 0, # times consec_failures has reset (Fix A — retry instead of abort)
 }
+
+_ALERT_CACHE_MAX = int(os.getenv("IC_ALERT_CACHE_MAX", "256"))
+_MEMORY_WARNING_MB = int(os.getenv("IC_MEMORY_WARNING_THRESHOLD_MB", "400"))
+_MEMORY_CRITICAL_MB = int(os.getenv("IC_MEMORY_CRITICAL_THRESHOLD_MB", "700"))
+_MEMORY_CLEANUP_EVERY = int(os.getenv("IC_MEMORY_CLEANUP_EVERY", "20"))
 
 
 # ─── LOGGING (with auto-rotation) ────────────────────────────────────────────
@@ -135,9 +146,56 @@ def log(msg, level="INFO"):
 
 def alert_once(key, msg, level="WARN"):
     """Log a message only once per session (dedup by key)."""
-    if key not in state["alerts_sent"]:
-        log(msg, level)
-        state["alerts_sent"].add(key)
+    alerts = state["alerts_sent"]
+    if key in alerts:
+        return
+    log(msg, level)
+    alerts[key] = time.time()
+    alerts.move_to_end(key)
+    while len(alerts) > _ALERT_CACHE_MAX:
+        alerts.popitem(last=False)
+
+
+def _get_process_memory_mb():
+    if psutil is None:
+        return None
+    try:
+        return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+    except Exception:
+        return None
+
+
+def _malloc_trim():
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        return bool(libc.malloc_trim(0))
+    except Exception:
+        return False
+
+
+def _maybe_trim_runtime_memory(iteration: int):
+    if _MEMORY_CLEANUP_EVERY <= 0 or iteration % _MEMORY_CLEANUP_EVERY != 0:
+        return None
+
+    rss_mb = _get_process_memory_mb()
+    if rss_mb is None:
+        return None
+
+    details = {"memory_rss_mb": round(rss_mb, 1)}
+    if rss_mb < _MEMORY_WARNING_MB:
+        return details
+
+    collected = gc.collect()
+    trimmed = _malloc_trim()
+    details.update({"gc_collected": collected, "malloc_trim": trimmed})
+    if rss_mb >= _MEMORY_CRITICAL_MB:
+        log(
+            f"Memory pressure: RSS={rss_mb:.1f} MB, gc={collected}, trim={trimmed}",
+            "WARN",
+        )
+    return details
 
 
 # ─── STATE PERSISTENCE (G7 — survive monitor restarts) ───────────────────────
@@ -462,57 +520,70 @@ def get_positions():
 
 
 def enrich_ltps_from_quotes(positions):
-    """Fetch live LTP via quotes API for any option position where ltp==0.
+    """Fetch live LTP via a SINGLE optionchain call instead of N concurrent quotes calls.
 
-    Root cause fix (25-FEB-2026): OpenAlgo positionbook and Dhan positions API
-    both return lastTradedPrice=0 for option positions. Without real LTPs,
-    MTM=0 always → pct_captured=0 → ROLL_ZONE fires perpetually.
+    Fix (05-MAR-2026): Original approach fired up to 4 concurrent /quotes API calls
+    per poll cycle. With 17 strategies also hitting OpenAlgo, this caused thundering-herd
+    timeouts. One /optionchain call returns all strike LTPs in one round-trip — 8x fewer
+    API calls, no concurrency contention.
 
-    2.7: Parallel fetches with ThreadPoolExecutor (4 legs in ~1s vs 4s sequential).
+    Falls back to individual quotes if optionchain call fails or returns no data.
     """
     need_ltp = [(sym, p) for sym, p in positions.items()
                 if p["qty"] != 0 and is_option_sym(sym) and p.get("ltp", 0) <= 0]
     if not need_ltp:
         return 0
 
-    def _fetch_ltp(sym):
-        try:
-            # BUG4 fix: retry once on timeout
-            r   = api_post_retry("quotes", {"symbol": sym, "exchange": "NFO"},
-                                 n=2, backoff=1.0, timeout=4)
-            ltp = float(r.get("data", {}).get("ltp", 0) or 0)
-            return sym, ltp
-        except Exception as e:
-            log(f"LTP enrich error [{sym}]: {e}", "WARN")
-            return sym, 0.0
+    # Build a map of (strike, type) → symbol for positions needing LTP
+    import re
+    sym_to_key = {}
+    for sym, p in need_ltp:
+        m = re.search(r'(\d{4,6})(CE|PE)$', sym)
+        if m:
+            sym_to_key[sym] = (int(m.group(1)), m.group(2))
 
+    # Determine expiry from state (already resolved at startup)
+    expiry = state.get("expiry", "")
     updated = 0
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_fetch_ltp, sym): (sym, p) for sym, p in need_ltp}
+
+    if expiry and sym_to_key:
         try:
-            for fut in as_completed(futures, timeout=8):
-                try:
-                    sym, ltp = fut.result(timeout=2)
+            r = api_post_retry("optionchain",
+                               {"underlying": "NIFTY", "exchange": "NSE_INDEX",
+                                "expiry_date": expiry, "strike_count": 20},
+                               n=2, backoff=2.0, timeout=10)
+            chain = r.get("chain", [])
+            ltp_lookup = {}
+            for s in chain:
+                k = int(s.get("strike", 0))
+                ltp_lookup[(k, "CE")] = float(s.get("ce", {}).get("ltp", 0) or 0)
+                ltp_lookup[(k, "PE")] = float(s.get("pe", {}).get("ltp", 0) or 0)
+
+            for sym, p in need_ltp:
+                key = sym_to_key.get(sym)
+                if key:
+                    ltp = ltp_lookup.get(key, 0)
                     if ltp > 0:
-                        p = positions[sym]
                         p["ltp"] = ltp
                         p["mtm"] = (ltp - p["avg"]) * p["qty"]
                         updated += 1
-                except Exception:
-                    pass
-        except TimeoutError:
-            # Some futures didn't complete in time — collect what we have
-            for fut, (sym, p_) in futures.items():
-                if fut.done():
-                    try:
-                        sym, ltp = fut.result()
-                        if ltp > 0:
-                            p = positions[sym]
-                            p["ltp"] = ltp
-                            p["mtm"] = (ltp - p["avg"]) * p["qty"]
-                            updated += 1
-                    except Exception:
-                        pass
+            if updated:
+                return updated
+        except Exception as e:
+            log(f"Optionchain LTP enrich failed, falling back to quotes: {e}", "WARN")
+
+    # Fallback: sequential individual quotes (one at a time to avoid burst)
+    for sym, p in need_ltp:
+        try:
+            r   = api_post_retry("quotes", {"symbol": sym, "exchange": "NFO"},
+                                 n=2, backoff=1.5, timeout=6)
+            ltp = float(r.get("data", {}).get("ltp", 0) or 0)
+            if ltp > 0:
+                p["ltp"] = ltp
+                p["mtm"] = (ltp - p["avg"]) * p["qty"]
+                updated += 1
+        except Exception as e:
+            log(f"LTP enrich error [{sym}]: {e}", "WARN")
     return updated
 
 
@@ -1341,15 +1412,28 @@ def compute_session_metrics(final_mtm: float) -> None:
         _expiry = state.get("expiry", "")
         if _expiry and os.path.exists(path):
             try:
+                _cycle_count = 0
+                _wins = 0
+                _total_pnl = 0.0
                 with open(path) as f:
-                    _all = [_json.loads(l) for l in f if l.strip()]
-                _cycle = [t for t in _all if t.get("expiry") == _expiry]
-                if _cycle:
-                    _total_pnl = sum(t.get("pnl", 0) for t in _cycle)
-                    _wins = sum(1 for t in _cycle if t.get("pnl", 0) > 0)
-                    log(f"EXPIRY SUMMARY ({_expiry}): {len(_cycle)} trades, "
-                        f"P&L=₹{_total_pnl:+,.0f}, wins={_wins}/{len(_cycle)} "
-                        f"({_wins/len(_cycle):.0%})", "METRICS")
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            trade = _json.loads(line)
+                        except Exception:
+                            continue
+                        if trade.get("expiry") != _expiry:
+                            continue
+                        pnl = float(trade.get("pnl", 0) or 0)
+                        _cycle_count += 1
+                        _total_pnl += pnl
+                        if pnl > 0:
+                            _wins += 1
+                if _cycle_count:
+                    log(f"EXPIRY SUMMARY ({_expiry}): {_cycle_count} trades, "
+                        f"P&L=₹{_total_pnl:+,.0f}, wins={_wins}/{_cycle_count} "
+                        f"({_wins/_cycle_count:.0%})", "METRICS")
             except Exception:
                 pass
         # 3.5: log event
@@ -1774,7 +1858,12 @@ def monitor_loop():
             state["last_dce"]   = int(short_ce - nifty) if short_ce and nifty else 0
 
             # ── 2.3: Heartbeat file (read by /health endpoint) ────────────
-            write_heartbeat(nifty, mtm, {"iteration": iteration, "net_delta": _net_d})
+            memory_extra = _maybe_trim_runtime_memory(iteration) or {}
+            write_heartbeat(
+                nifty,
+                mtm,
+                {"iteration": iteration, "net_delta": _net_d, **memory_extra},
+            )
 
             # ── Heartbeat to n8n every 10 iterations (≈10 min) ───────────
             if iteration % 10 == 0:
